@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "erosion-sim-modeling"
+version = "0.1.0"
+description = "Experiments for a neural surrogate of terrain erosion simulation"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "landlab>=2.11.0",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
+    "pyvista>=0.49.1",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.0",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
