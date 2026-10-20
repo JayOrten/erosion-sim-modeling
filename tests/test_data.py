@@ -1,5 +1,3 @@
-import json
-
 import numpy as np
 import pytest
 import torch
@@ -7,28 +5,7 @@ from torch.utils.data import DataLoader
 
 from erosion_sim.data import COND_NAMES, ErosionPairs, Normalizer, denormalize, select_runs
 
-RUNS, SNAPS, SIZE = 4, 6, 16
-
-
-@pytest.fixture
-def dataset_path(tmp_path):
-    """A tiny dataset in the format datagen writes: terrain that lowers at a rate set by K_ref."""
-    rng = np.random.default_rng(0)
-    K_ref = np.array([1e-4, 2e-4, 3e-4, 4e-4])
-    z0 = rng.uniform(0, 64, (RUNS, 1, SIZE, SIZE))
-    t = np.arange(SNAPS)[None, :, None, None] * 1000.0
-    snapshots = (z0 * np.exp(-0.05 * K_ref[:, None, None, None] * t)).astype(np.float32)
-    snapshots[:, :, 0, :] = snapshots[:, :1, 0, :]  # fixed edges, as in the simulator
-    np.save(tmp_path / "snapshots.npy", snapshots)
-    np.savez(
-        tmp_path / "params.npz",
-        times=np.arange(SNAPS) * 1000.0,
-        K=K_ref * 1.2, K_ref=K_ref, D=K_ref * np.array([0.5, 1, 2, 3]), m=np.array([0.3, 0.4, 0.5, 0.6]),
-        U=np.array([0.0, 0.0, 1e-5, 2e-5]), period=np.full(RUNS, 64.0), persistence=np.full(RUNS, 0.5),
-        terrain_seed=np.arange(RUNS),
-    )
-    (tmp_path / "meta.json").write_text(json.dumps({"config": {}, "split": "train"}))
-    return tmp_path
+from conftest import RUNS, SIZE, SNAPS
 
 
 @pytest.mark.parametrize("scale", ["fitted", "relief"])
