@@ -166,8 +166,6 @@ Every result is compared against:
 
 - **The simulator.** Ground truth, and the speed reference.
 - **No change.** Predict `z_b = z_a`. Any useful model must beat this.
-- **Diffusion only.** Apply linear diffusion analytically (a Gaussian blur) for the elapsed time.
-  Cheap, ignores rivers. Shows how much of the result is just smoothing.
 - **Coarse simulator** (optional). Run the simulator at half resolution and upsample. This is the
   fast non-learned competitor a reviewer would ask about.
 
@@ -303,7 +301,9 @@ Check-in: skill score, and pictures against the simulator.
 
 ### 10. Train with variable time
 
-Train on all `ΔT` values in the subset, with some held out.
+Train on all `ΔT` values in the subset (runs without uplift), for one pass over every pair, with
+early stopping. No `ΔT` is held out: the validation split tests in-distribution accuracy on unseen
+runs, which is what matters here.
 
 Check-in: loss curves.
 

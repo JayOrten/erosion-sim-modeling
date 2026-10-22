@@ -25,10 +25,12 @@ class Config:
     lr: float = 3e-4
     weight_decay: float = 1e-4
     steps: int = 20_000
+    epochs: float | None = None  # if set, replaces steps: this many passes over the training pairs
     warmup_steps: int = 500
     # Validation
     eval_every: int = 1_000
     val_samples: int = 2_048  # fixed validation pairs, drawn once
+    patience: int | None = None  # stop after this many evaluations without a better validation loss
     log_every: int = 100
     # Hardware
     num_workers: int = 8
@@ -76,12 +78,13 @@ PROFILES = {
         lags=(10,),
         steps=20_000,
     ),
-    # Step 10: every elapsed time, no uplift. 25,000 yr is held out of training.
+    # Step 10: every elapsed time, no uplift. One pass over every pair, about 53,000 steps at batch 64.
     "variable_dt": Config(
         profile="variable_dt",
         data_profile="full",
         runs=(("U", (0.0, 0.0)),),
-        lags=tuple(k for k in range(1, 51) if k != 25),
-        steps=40_000,
+        epochs=1.0,
+        patience=10,
+        batch_size=64
     ),
 }

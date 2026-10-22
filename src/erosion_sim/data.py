@@ -46,7 +46,7 @@ def select_runs(params: dict[str, np.ndarray], **ranges: tuple[float, float]) ->
     return np.flatnonzero(keep)
 
 
-def _cond_values(params, runs, dT, relief) -> np.ndarray:
+def cond_values(params, runs, dT, relief) -> np.ndarray:
     """Raw conditioning scalars, shape (len(runs), len(COND_NAMES))."""
     return np.stack([
         np.log10(dT),
@@ -92,7 +92,7 @@ class Normalizer:
             s = np.asarray(snapshots[r], dtype=np.float64)
             reliefs = s.max(axis=(1, 2)) - s.min(axis=(1, 2))
             # Conditioning ranges cover every start, since U / relief grows as relief drops.
-            cond.append(_cond_values(params, np.full(count, r), np.full(count, times[1] - times[0]), reliefs))
+            cond.append(cond_values(params, np.full(count, r), np.full(count, times[1] - times[0]), reliefs))
             for a in starts:
                 dT = times[a + 1:] - times[a]
                 kdt.append(params["K_ref"][r] * dT)
@@ -168,7 +168,7 @@ class ErosionPairs(Dataset):
         relief = float(z_a.max()) - low
         dT = float(self.times[b] - self.times[a])
         scale = float(self.normalizer.target_scale(self.params["K_ref"][run], dT))
-        cond = self.normalizer.cond(_cond_values(self.params, np.array([run]), np.array([dT]), relief)[0])
+        cond = self.normalizer.cond(cond_values(self.params, np.array([run]), np.array([dT]), relief)[0])
         return {
             "x": torch.from_numpy((z_a - low) / relief)[None],
             "y": torch.from_numpy((z_b - z_a) / (relief * scale))[None],

@@ -8,7 +8,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, RandomSampler, Subset
+from torch.utils.data import DataLoader, Sampler, Subset
 
 from .config import Config
 from .data import ARTIFACTS_DIR, COND_NAMES, ErosionPairs, Normalizer, select_runs
@@ -17,6 +17,38 @@ from .model import UNet, count_parameters
 
 def checkpoint_path(cfg: Config) -> Path:
     return ARTIFACTS_DIR / f"unet-{cfg.profile}.pt"
+
+
+def last_checkpoint_path(best: Path) -> Path:
+    """Where the latest state goes, next to the best checkpoint: unet-<profile>-last.pt."""
+    return best.with_name(f"{best.stem}-last{best.suffix}")
+
+
+# Config fields that may differ when resuming: they do not change what is trained.
+_RESUMABLE_CHANGES = {"num_workers", "compile", "log_every", "patience"}
+
+
+class _OrderSampler(Sampler):
+    """Yields the indices of a fixed array in order."""
+
+    def __init__(self, order: np.ndarray):
+        self.order = order
+
+    def __iter__(self):
+        return iter(self.order.tolist())
+
+    def __len__(self) -> int:
+        return len(self.order)
+
+
+def training_order(size: int, count: int, seed: int) -> np.ndarray:
+    """The first ``count`` training indices: shuffled passes over ``size`` pairs, without replacement.
+
+    Fixed by ``seed``, so a resumed run continues the same order.
+    """
+    rng = np.random.default_rng(seed)
+    passes = [rng.permutation(size) for _ in range(math.ceil(count / size))]
+    return np.concatenate(passes)[:count]
 
 
 def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[ErosionPairs, ErosionPairs, Normalizer]:
@@ -62,9 +94,15 @@ def evaluate_loss(model, loader, device, bf16) -> dict:
     return {"val_loss": mse, "val_skill": 1 - mse / mse_zero}
 
 
-def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Path | None = None, **overrides) -> dict:
+def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Path | None = None, resume: bool = False,
+          **overrides) -> dict:
     """Train a model for ``cfg`` and save the checkpoint with the best validation loss.
 
+    At every evaluation, the latest state (with the optimizer) is also saved to ``unet-<profile>-last.pt``.
+    Stops early after ``cfg.patience`` evaluations without a better validation loss.
+    With ``resume=True``, continues from ``unet-<profile>-last.pt``: model, optimizer, learning-rate
+    schedule, history, and position in the training order. The config must match the saved one, except
+    for the fields in ``_RESUMABLE_CHANGES``.
     Keyword overrides replace ``cfg`` fields, for example ``train(PROFILES["fixed_dt"], steps=500)``.
     Returns the training history, plus the checkpoint path under ``"checkpoint"``.
     """
@@ -83,26 +121,42 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
     if cfg.max_train_samples is not None:
         train_data = Subset(train_data, rng.choice(len(train_data), cfg.max_train_samples, replace=False))
     val_subset = Subset(val_data, rng.choice(len(val_data), min(cfg.val_samples, len(val_data)), replace=False))
+    if cfg.epochs is not None:
+        cfg = replace(cfg, steps=math.ceil(cfg.epochs * len(train_data) / cfg.batch_size))
 
     loader_args = dict(batch_size=cfg.batch_size, num_workers=cfg.num_workers, pin_memory=use_cuda,
                        persistent_workers=cfg.num_workers > 0)
-    sampler = RandomSampler(train_data, replacement=True, num_samples=cfg.steps * cfg.batch_size)
-    train_loader = DataLoader(train_data, sampler=sampler, drop_last=True, **loader_args)
-    val_loader = DataLoader(val_subset, shuffle=False, **loader_args)
-
     model = build_model(cfg).to(device)
-    step_model = torch.compile(model) if cfg.compile and use_cuda else model
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay, fused=use_cuda)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: _lr_factor(step, cfg))
     out = Path(out) if out is not None else checkpoint_path(cfg)
     out.parent.mkdir(parents=True, exist_ok=True)
+    last = last_checkpoint_path(out)
+
+    history = {"step": [], "train_loss": [], "lr": [], "eval_step": [], "val_loss": [], "val_skill": []}
+    best, since_best, done = math.inf, 0, 0
+    if resume:
+        saved = torch.load(last, map_location=device, weights_only=False)
+        changed = {k for k, v in asdict(cfg).items() if saved["config"].get(k) != v} - _RESUMABLE_CHANGES
+        if changed:
+            raise ValueError(f"config differs from {last.name} in {sorted(changed)}; cannot resume")
+        model.load_state_dict(saved["model"])
+        opt.load_state_dict(saved["optimizer"])
+        sched.load_state_dict(saved["scheduler"])
+        history, done = saved["history"], saved["step"]
+        best = min(history["val_loss"])
+        since_best = len(history["val_loss"]) - 1 - int(np.argmin(history["val_loss"]))
+        print(f"resuming from {last.name} at step {done}", flush=True)
+
+    order = training_order(len(train_data), cfg.steps * cfg.batch_size, cfg.seed)[done * cfg.batch_size:]
+    train_loader = DataLoader(train_data, sampler=_OrderSampler(order), drop_last=True, **loader_args)
+    val_loader = DataLoader(val_subset, shuffle=False, **loader_args)
+    step_model = torch.compile(model) if cfg.compile and use_cuda else model
 
     print(f"{cfg.profile}: {count_parameters(model):,} parameters, {len(train_data):,} training pairs, "
           f"{len(val_subset):,} validation pairs, device {device}", flush=True)
-    history = {"step": [], "train_loss": [], "lr": [], "eval_step": [], "val_loss": [], "val_skill": []}
-    best = math.inf
     running, seen, start = 0.0, 0, time.perf_counter()
-    for step, batch in enumerate(train_loader, start=1):
+    for step, batch in enumerate(train_loader, start=done + 1):
         x, cond, y = (batch[k].to(device, non_blocking=True) for k in ("x", "cond", "y"))
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=bf16):
             pred = step_model(x, cond)
@@ -118,7 +172,7 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
             history["step"].append(step)
             history["train_loss"].append(running / seen)
             history["lr"].append(sched.get_last_lr()[0])
-            rate = step * cfg.batch_size / (time.perf_counter() - start)
+            rate = (step - done) * cfg.batch_size / (time.perf_counter() - start)
             print(f"step {step}/{cfg.steps}  train loss {running / seen:.4f}  lr {history['lr'][-1]:.2e}  "
                   f"{rate:,.0f} samples/s", flush=True)
             running, seen = 0.0, 0
@@ -128,12 +182,19 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
             history["val_loss"].append(result["val_loss"])
             history["val_skill"].append(result["val_skill"])
             saved = result["val_loss"] < best
+            state = {"model": model.state_dict(), "config": asdict(cfg), "normalizer": normalizer.to_dict(),
+                     "step": step, "history": history}
             if saved:
-                best = result["val_loss"]
-                torch.save({"model": model.state_dict(), "config": asdict(cfg), "normalizer": normalizer.to_dict(),
-                            "step": step, "history": history}, out)
+                best, since_best = result["val_loss"], 0
+                torch.save(state, out)
+            else:
+                since_best += 1
+            torch.save({**state, "optimizer": opt.state_dict(), "scheduler": sched.state_dict()}, last)
             print(f"  validation loss {result['val_loss']:.4f}  skill vs no change {result['val_skill']:.3f}"
-                  f"{'  (saved)' if saved else ''}", flush=True)
+                  f"{'  (saved best)' if saved else ''}", flush=True)
+            if cfg.patience is not None and since_best >= cfg.patience:
+                print(f"stopping early: no better validation loss in {since_best} evaluations", flush=True)
+                break
 
     history["checkpoint"] = out
     history["seconds"] = time.perf_counter() - start
@@ -166,50 +227,3 @@ def load_checkpoint(path: Path, device: str | None = None) -> tuple[UNet, Normal
     normalizer = Normalizer(tuple(norm["cond_low"]), tuple(norm["cond_high"]), norm["scale"], norm["coef"], norm["power"])
     return model, normalizer, cfg, ckpt
 
-
-@torch.no_grad()
-def show_predictions(path: Path, count: int = 3, split: str = "val", data_root: Path | None = None, seed: int = 0) -> None:
-    """Plot the model's prediction next to the simulator for ``count`` random pairs of ``split``.
-
-    Columns: start, simulator end, model end, simulator change, model change, error. Changes and error
-    share one color scale per row.
-    """
-    from matplotlib.colors import LightSource
-
-    from .data import denormalize
-
-    model, normalizer, cfg, _ = load_checkpoint(path)
-    device = next(model.parameters()).device
-    root = Path(data_root) if data_root is not None else ARTIFACTS_DIR / "data" / cfg.data_profile
-    params = dict(np.load(root / split / "params.npz"))
-    data = ErosionPairs(root / split, normalizer, runs=select_runs(params, **dict(cfg.runs)), lags=cfg.lags)
-    light = LightSource(azdeg=315, altdeg=45)
-
-    def shade(z, low, high):
-        return light.shade(z, cmap=plt.cm.terrain, blend_mode="soft", vmin=low, vmax=high)
-
-    fig, axes = plt.subplots(count, 6, figsize=(19, 3.3 * count), layout="constrained", squeeze=False)
-    for row, i in zip(axes, np.random.default_rng(seed).choice(len(data), count, replace=False)):
-        item = data[int(i)]
-        pred = model(item["x"][None].to(device), item["cond"][None].to(device)).float().cpu()
-        z_a, z_b = item["z_a"].numpy(), item["z_b"].numpy()
-        z_pred = denormalize(pred, item["z_a"][None], item["relief"], item["scale"])[0].numpy()
-        low, high = min(z_a.min(), z_b.min()), max(z_a.max(), z_b.max())
-        true_change, pred_change = z_b - z_a, z_pred - z_a
-        limit = np.abs(true_change).max()
-        dT = data.times[item["end"]] - data.times[item["start"]]
-        rmse = np.sqrt(((z_pred - z_b) ** 2).mean())
-        panels = [
-            (shade(z_a, low, high), f"run {item['run']}: start, t={data.times[item['start']]:,.0f} yr", {}),
-            (shade(z_b, low, high), f"simulator, ΔT={dT:,.0f} yr", {}),
-            (shade(z_pred, low, high), "model", {}),
-            (true_change, "simulator change (m)", dict(cmap="RdBu", vmin=-limit, vmax=limit)),
-            (pred_change, "model change (m)", dict(cmap="RdBu", vmin=-limit, vmax=limit)),
-            (z_pred - z_b, f"model - simulator, RMSE {rmse:.2f} m", dict(cmap="RdBu", vmin=-limit, vmax=limit)),
-        ]
-        for ax, (image, title, kwargs) in zip(row, panels):
-            im = ax.imshow(image, origin="lower", **kwargs)
-            ax.set_title(title, fontsize=9)
-            ax.set_axis_off()
-        plt.colorbar(im, ax=row[3:], shrink=0.8)
-    plt.show()
