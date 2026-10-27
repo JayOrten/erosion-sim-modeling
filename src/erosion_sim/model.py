@@ -63,7 +63,7 @@ class SelfAttention(nn.Module):
 class UNet(nn.Module):
     """Predict the normalized change ``y`` from the normalized start heightmap ``x`` and conditioning.
 
-    - ``x``: (batch, 1, H, W). H and W must be divisible by ``2 ** (len(channels) - 1)``.
+    - ``x``: (batch, in_channels, H, W). H and W must be divisible by ``2 ** (len(channels) - 1)``.
     - ``cond``: (batch, cond_dim), each value about in [0, 1].
     - Output: (batch, 1, H, W). Edge nodes are set to zero, since the simulator holds edges fixed.
 
@@ -78,6 +78,7 @@ class UNet(nn.Module):
         emb_dim: int = 256,
         frequencies: int = 16,
         attention: bool = True,
+        in_channels: int = 1,
     ):
         super().__init__()
         self.levels = len(channels)
@@ -85,7 +86,7 @@ class UNet(nn.Module):
         self.embed = nn.Sequential(
             nn.Linear(cond_dim * 2 * frequencies, emb_dim), nn.SiLU(), nn.Linear(emb_dim, emb_dim), nn.SiLU()
         )
-        self.stem = nn.Conv2d(1, channels[0], 3, padding=1)
+        self.stem = nn.Conv2d(in_channels, channels[0], 3, padding=1)
 
         # Encoder: `blocks` ResBlocks per level, then a stride-2 convolution down to the next level.
         self.down = nn.ModuleList()

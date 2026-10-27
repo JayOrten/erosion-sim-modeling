@@ -65,6 +65,8 @@ class Normalizer:
     - The target is ``(z_b - z_a) / relief(z_a)``. With ``scale="fitted"``, it is further divided by
       ``coef * (K_ref * dT) ** power``, the typical RMS (root mean square) of that change, so short
       and long elapsed times have targets of similar size. With ``scale="relief"``, it is not.
+    - ``sigma_data`` is the RMS of that normalized target over the fitting sample. The diffusion
+      model's preconditioning uses it. It is measured over all elapsed times, not only a run's ``lags``.
     """
 
     cond_low: tuple[float, ...]
@@ -72,6 +74,7 @@ class Normalizer:
     scale: str = "fitted"
     coef: float = 1.0
     power: float = 0.0
+    sigma_data: float = 1.0
 
     @classmethod
     def fit(cls, path: Path, scale: str = "fitted", runs: np.ndarray | None = None, sample: int = 400, seed: int = 0):
@@ -101,11 +104,13 @@ class Normalizer:
         # Longest elapsed time gives the conditioning range for dT; the others come from the runs.
         low, high = cond.min(axis=0), cond.max(axis=0)
         low[0], high[0] = np.log10(times[1] - times[0]), np.log10(times[-1] - times[0])
+        kdt, rms = np.concatenate(kdt), np.concatenate(rms)
         coef, power = 1.0, 0.0
         if scale == "fitted":
-            power, log_coef = np.polyfit(np.log(np.concatenate(kdt)), np.log(np.concatenate(rms)), 1)
+            power, log_coef = np.polyfit(np.log(kdt), np.log(rms), 1)
             coef = float(np.exp(log_coef))
-        return cls(tuple(map(float, low)), tuple(map(float, high)), scale, coef, float(power))
+        sigma_data = float(np.sqrt(np.mean((rms / (coef * kdt**power)) ** 2)))
+        return cls(tuple(map(float, low)), tuple(map(float, high)), scale, coef, float(power), sigma_data)
 
     def cond(self, raw: np.ndarray) -> np.ndarray:
         low, high = np.array(self.cond_low), np.array(self.cond_high)

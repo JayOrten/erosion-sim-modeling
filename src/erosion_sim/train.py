@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, Sampler, Subset
 
 from .config import Config
 from .data import ARTIFACTS_DIR, COND_NAMES, ErosionPairs, Normalizer, select_runs
+from .diffusion import Denoiser
 from .model import UNet, count_parameters
 
 
@@ -65,10 +66,12 @@ def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[ErosionPa
     return train, val, normalizer
 
 
-def build_model(cfg: Config) -> UNet:
+def build_model(cfg: Config, normalizer: Normalizer) -> UNet | Denoiser:
+    """The U-Net for regression, or the U-Net inside an EDM denoiser for diffusion."""
+    unet = dict(channels=cfg.channels, blocks=cfg.blocks, emb_dim=cfg.emb_dim, attention=cfg.attention)
     if cfg.objective == "diffusion":
-        raise NotImplementedError("the diffusion model is built in step 2 of docs/diffusion-plan.md")
-    return UNet(len(COND_NAMES), channels=cfg.channels, blocks=cfg.blocks, emb_dim=cfg.emb_dim, attention=cfg.attention)
+        return Denoiser(len(COND_NAMES), sigma_data=normalizer.sigma_data, **unet)
+    return UNet(len(COND_NAMES), **unet)
 
 
 def _lr_factor(step: int, cfg: Config) -> float:
@@ -109,6 +112,8 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
     Returns the training history, plus the checkpoint path under ``"checkpoint"``.
     """
     cfg = replace(cfg, **overrides)
+    if cfg.objective == "diffusion":
+        raise NotImplementedError("diffusion training is step 3 of docs/diffusion-plan.md")
     torch.manual_seed(cfg.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_cuda = device.type == "cuda"
@@ -128,7 +133,7 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
 
     loader_args = dict(batch_size=cfg.batch_size, num_workers=cfg.num_workers, pin_memory=use_cuda,
                        persistent_workers=cfg.num_workers > 0)
-    model = build_model(cfg).to(device)
+    model = build_model(cfg, normalizer).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay, fused=use_cuda)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: _lr_factor(step, cfg))
     out = Path(out) if out is not None else checkpoint_path(cfg)
@@ -139,7 +144,8 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
     best, since_best, done = math.inf, 0, 0
     if resume:
         saved = torch.load(last, map_location=device, weights_only=False)
-        changed = {k for k, v in asdict(cfg).items() if saved["config"].get(k) != v} - _RESUMABLE_CHANGES
+        saved_cfg = asdict(Config(**saved["config"]))  # fills fields added since the save with defaults
+        changed = {k for k, v in asdict(cfg).items() if saved_cfg[k] != v} - _RESUMABLE_CHANGES
         if changed:
             raise ValueError(f"config differs from {last.name} in {sorted(changed)}; cannot resume")
         model.load_state_dict(saved["model"])
@@ -225,10 +231,10 @@ def load_checkpoint(path: Path, device: str | None = None) -> tuple[UNet, Normal
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(path, map_location=device, weights_only=False)
     cfg = Config(**ckpt["config"])
-    model = build_model(cfg).to(device)
+    norm = ckpt["normalizer"]
+    normalizer = Normalizer(**{**norm, "cond_low": tuple(norm["cond_low"]), "cond_high": tuple(norm["cond_high"])})
+    model = build_model(cfg, normalizer).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
-    norm = ckpt["normalizer"]
-    normalizer = Normalizer(tuple(norm["cond_low"]), tuple(norm["cond_high"]), norm["scale"], norm["coef"], norm["power"])
     return model, normalizer, cfg, ckpt
 
