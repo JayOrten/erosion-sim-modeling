@@ -62,3 +62,27 @@ def test_resume_continues_where_it_stopped(data_root, tmp_path, monkeypatch):
     assert resumed["eval_step"] == full["eval_step"] == [4, 8]
     np.testing.assert_allclose(resumed["train_loss"], full["train_loss"], rtol=1e-5)
     np.testing.assert_allclose(resumed["val_loss"], full["val_loss"], rtol=1e-5)
+
+
+def test_checkpoint_names_follow_the_objective():
+    from dataclasses import replace
+
+    import pytest
+
+    from erosion_sim.train import checkpoint_path
+
+    assert checkpoint_path(PROFILES["smoke"]).name == "unet-smoke.pt"
+    assert checkpoint_path(replace(PROFILES["smoke"], objective="diffusion")).name == "diffusion-smoke.pt"
+    with pytest.raises(ValueError):
+        replace(PROFILES["smoke"], objective="gan")
+
+
+def test_checkpoint_without_objective_loads_as_regression(data_root, tmp_path):
+    out = tmp_path / "unet-smoke.pt"
+    train(PROFILES["smoke"], data_root=data_root, show=False, out=out)
+    ckpt = torch.load(out, weights_only=False)
+    del ckpt["config"]["objective"]
+    torch.save(ckpt, out)
+
+    _, _, cfg, _ = load_checkpoint(out, device="cpu")
+    assert cfg.objective == "regression"

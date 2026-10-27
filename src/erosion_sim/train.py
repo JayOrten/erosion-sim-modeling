@@ -16,11 +16,11 @@ from .model import UNet, count_parameters
 
 
 def checkpoint_path(cfg: Config) -> Path:
-    return ARTIFACTS_DIR / f"unet-{cfg.profile}.pt"
+    return ARTIFACTS_DIR / f"{cfg.prefix}-{cfg.profile}.pt"
 
 
 def last_checkpoint_path(best: Path) -> Path:
-    """Where the latest state goes, next to the best checkpoint: unet-<profile>-last.pt."""
+    """Where the latest state goes, next to the best checkpoint: <prefix>-<profile>-last.pt."""
     return best.with_name(f"{best.stem}-last{best.suffix}")
 
 
@@ -66,6 +66,8 @@ def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[ErosionPa
 
 
 def build_model(cfg: Config) -> UNet:
+    if cfg.objective == "diffusion":
+        raise NotImplementedError("the diffusion model is built in step 2 of docs/diffusion-plan.md")
     return UNet(len(COND_NAMES), channels=cfg.channels, blocks=cfg.blocks, emb_dim=cfg.emb_dim, attention=cfg.attention)
 
 
@@ -216,7 +218,10 @@ def plot_history(history: dict) -> None:
 
 
 def load_checkpoint(path: Path, device: str | None = None) -> tuple[UNet, Normalizer, Config, dict]:
-    """Return (model in eval mode, normalizer, config, full checkpoint) from a saved checkpoint."""
+    """Return (model in eval mode, normalizer, config, full checkpoint) from a saved checkpoint.
+
+    Checkpoints saved before ``Config.objective`` existed load as regression, the field's default.
+    """
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(path, map_location=device, weights_only=False)
     cfg = Config(**ckpt["config"])

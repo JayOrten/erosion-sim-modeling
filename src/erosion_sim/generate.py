@@ -100,7 +100,7 @@ def comparison_gif(
         top = np.asarray(Image.fromarray(top).resize((bottom.shape[1], round(top.shape[0] * bottom.shape[1] / top.shape[1]))))
         frames.append(Image.fromarray(np.concatenate([top, bottom], axis=0)))
 
-    out = Path(out) if out is not None else ARTIFACTS_DIR / "animations" / f"unet-{cfg.profile}-{split}-run{run}-{mode}.gif"
+    out = Path(out) if out is not None else ARTIFACTS_DIR / "animations" / f"{cfg.prefix}-{cfg.profile}-{split}-run{run}-{mode}.gif"
     out.parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(out, save_all=True, append_images=frames[1:], duration=int(1000 / fps), loop=0)
     return out
