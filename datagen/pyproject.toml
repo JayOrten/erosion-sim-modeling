@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "erosion-datagen"
+version = "0.1.0"
+description = "Generate Landlab erosion datasets, with richdem pit filling"
+readme = "README.md"
+# richdem 0.3.4 (the last release) does not build on Python 3.11 or later, and needs numpy 1.
+requires-python = "==3.10.*"
+dependencies = [
+    "landlab==2.9.*",
+    "matplotlib>=3.8",
+    "numpy>=1.26,<2",
+    "pyvista>=0.44",
+    "richdem==0.3.4",
+    # richdem imports pkg_resources, which setuptools 81 removes.
+    "setuptools<81",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.0",
+    "pytest>=8.0",
+]
+
+[tool.uv]
+# richdem's C++ code predates GCC's stricter headers and fails without this include.
+extra-build-variables = { richdem = { CXXFLAGS = "-include cstdint", CFLAGS = "-include cstdint" } }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

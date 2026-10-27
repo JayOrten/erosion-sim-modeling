@@ -9,10 +9,10 @@ description = "Experiments for a neural surrogate of terrain erosion simulation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "landlab>=2.11.0",
     "matplotlib>=3.11.2",
     "numpy>=2.5.4",
     "pyvista>=0.49.1",
+    "torch>=2.14.1",
 ]
 
 [dependency-groups]
