@@ -1,6 +1,6 @@
 # Plan: diffusion surrogate, compared against the U-Net regression baseline
 
-Status: draft.
+Status: steps 1-5 and 7 done. Step 6 needs the sampler step count from the sweep. Step 8 is next.
 
 ## Goal
 
@@ -13,7 +13,7 @@ The simulator is deterministic, so a better pixel error is not the expected gain
 sharper channels and better hydrology in places where the regression model averages over possible
 channel positions.
 
-After the comparison, the regression code will likely be removed. Until then, both stay working.
+Regression stays as the baseline for comparison while diffusion is iterated on. Both stay working.
 
 ## Decisions
 
@@ -27,7 +27,8 @@ After the comparison, the regression code will likely be removed. Until then, bo
   conditioned on the normalized start heightmap `z_a`. `data.py` and `Normalizer` do not change.
 - **Layout.** `Config` gains `objective: "regression" | "diffusion"`. The diffusion loss and sampler
   live in a new `diffusion.py`. `train.py`, `generate.py`, and `evaluate.py` branch on the field.
-  Diffusion checkpoints are `artifacts/diffusion-<profile>.pt`.
+  Checkpoints are `artifacts/<objective>-<profile>.pt`. Profiles set the data and model size only, so
+  every profile works with both objectives.
 - **Deferred:** guidance (classifier-free guidance, AutoGuidance) and consistency distillation.
 
 ## Steps
@@ -37,7 +38,7 @@ After the comparison, the regression code will likely be removed. Until then, bo
 Add a field that says which kind of model a run trains, and name checkpoints by it.
 
 - `objective: str = "regression"`, so existing profiles and checkpoints are unchanged.
-- `checkpoint_path` uses the prefix `unet-` for regression and `diffusion-` for diffusion.
+- `checkpoint_path` names checkpoints `<objective>-<profile>.pt`.
 - `load_checkpoint` reads the field and builds the matching model. Old checkpoints without the field
   load as regression.
 
@@ -91,20 +92,22 @@ Check-in: two calls with the same seed match exactly; different seeds differ. Un
 
 ### 5. Add profiles and run the overfit test
 
-Add diffusion profiles that mirror the regression ones, and check that the pipeline can memorize.
+Make every profile usable with either objective, and check that the pipeline can memorize.
 
-- `diffusion_smoke`, `diffusion_overfit`, `diffusion_fixed_dt`. Same data settings as their
-  regression twins.
-- Run `diffusion_overfit` on 10 pairs. Samples for those pairs should closely match the simulator.
+- `get_config(profile, objective)` returns a profile with the objective set. There are no separate
+  diffusion profiles.
+- Run `overfit` with the diffusion objective on 10 pairs. Samples for those pairs should closely match the simulator.
 
 Check-in: look at overfit samples next to the simulator before spending GPU time on step 6.
 
-### 6. Train `diffusion_fixed_dt`
+### 6. Train `fixed_dt` with the diffusion objective
 
 Train on the same data as the regression `fixed_dt` run: one elapsed time (10,000 yr), no uplift.
 
 - Use the same step budget as regression first. Increase it if the validation loss is still falling.
 - Pick the number of sampling steps by looking at the final metrics for 8, 16, 32, and 64 steps.
+  `evaluate.step_sweep` runs this, on the same pairs and noise for every step count (section 7.6 of
+  `notebooks/evaluate.ipynb`).
 
 Check-in: training curves and a few samples. Agree on the step count.
 
@@ -127,3 +130,27 @@ Evaluate both models on the same validation pairs with the existing metrics, plu
 
 Check-in: read the results together. Decide whether to remove regression, keep it, or change the
 diffusion setup.
+
+Outcome: keep regression as a baseline and keep iterating on diffusion. On 512 validation pairs, one
+diffusion sample has a higher RMSE than regression (0.63 m against 0.49 m), and the mean of 8 samples
+matches it (0.50 m). A sample keeps about 92% of the simulator's power at the finest scales, against
+about 65% for regression. Both models leave far more pits than the simulator (77 and 137 per terrain,
+against 6), and neither beats no change on channel IoU.
+
+### 8. Train `variable_dt` with the diffusion objective
+
+Train diffusion on every elapsed time, so one model answers any elapsed time directly from the start
+terrain (random access over time). Compare it with the regression `variable_dt` model.
+
+- Same data and step budget as the regression `variable_dt` run: every elapsed time, no uplift, one
+  pass over every pair (about 53,000 steps at batch 64) with early stopping. About 3.5 hours on the
+  laptop GPU. No code changes: `get_config("variable_dt", "diffusion")`.
+- Use the sampler step count chosen in step 6.
+- Evaluate with sections 6 and 7 of `notebooks/evaluate.ipynb`, with `COMPARE_PROFILE =
+  "variable_dt"`. Look at error and spread against elapsed time: the start terrain determines less
+  of the result the further ahead the query, so the spread should grow with elapsed time.
+- Compare direct prediction (one call from t = 0) with rollout (chained calls), for both models.
+
+Check-in: read the results. Then decide whether to measure coherence across time queries: whether
+samples for one seed at several elapsed times describe one consistent history. For example, how often
+a later sample is higher than an earlier one where the simulator only erodes.
