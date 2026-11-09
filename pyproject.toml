@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=2.5.4",
     "pyvista>=0.49.1",
     "torch>=2.14.1",
+    "tqdm>=4.70.1",
 ]
 
 [dependency-groups]
