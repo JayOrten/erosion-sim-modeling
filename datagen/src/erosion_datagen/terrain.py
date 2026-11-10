@@ -1,32 +1,19 @@
-"""Procedural starting terrain: Perlin noise summed over octaves (fBm)."""
+"""Procedural starting terrain: Perlin noise summed over octaves (fBm, fractal Brownian motion).
+
+The noise comes from FastNoiseLite (https://github.com/Auburn/FastNoiseLite, Python bindings
+``pyfastnoiselite``). It is a function of (seed, x, y): each lattice point's gradient comes from a hash
+of the seed and the point, and the octaves are summed with a fixed scale. So any region can be computed
+on its own, and overlapping regions agree.
+
+FastNoiseLite computes in 32-bit floats. Coordinates up to about 10^5 cells give smooth noise; at
+10^6 it starts to wobble, and at 10^7 it breaks into steps.
+"""
 
 import numpy as np
+from pyfastnoiselite.pyfastnoiselite import FastNoiseLite, FractalType, NoiseType
 
-
-def _fade(t: np.ndarray) -> np.ndarray:
-    """Perlin's smoothstep 6t^5 - 15t^4 + 10t^3, flat at 0 and 1."""
-    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
-
-
-def perlin(shape: tuple[int, int], period: float, rng: np.random.Generator) -> np.ndarray:
-    """One layer of 2D Perlin noise with lattice cells ``period`` pixels wide. Values are in about [-0.7, 0.7]."""
-    rows, cols = shape
-    lattice = (int(rows / period) + 2, int(cols / period) + 2)
-    angles = rng.uniform(0.0, 2.0 * np.pi, lattice)
-    grad_y, grad_x = np.sin(angles), np.cos(angles)
-
-    y, x = np.meshgrid(np.arange(rows) / period, np.arange(cols) / period, indexing="ij")
-    i0, j0 = np.floor(y).astype(int), np.floor(x).astype(int)
-    fy, fx = y - i0, x - j0
-
-    def corner(di: int, dj: int) -> np.ndarray:
-        # Dot product of the corner's gradient with the offset from that corner.
-        return grad_y[i0 + di, j0 + dj] * (fy - di) + grad_x[i0 + di, j0 + dj] * (fx - dj)
-
-    u, v = _fade(fx), _fade(fy)
-    top = corner(0, 0) + u * (corner(0, 1) - corner(0, 0))
-    bottom = corner(1, 0) + u * (corner(1, 1) - corner(1, 0))
-    return top + v * (bottom - top)
+# FastNoiseLite seeds are signed 32-bit integers.
+SEED_LIMIT = 2**31
 
 
 def fbm(
@@ -36,16 +23,23 @@ def fbm(
     octaves: int = 5,
     persistence: float = 0.5,
     lacunarity: float = 2.0,
+    origin: tuple[int, int] = (0, 0),
 ) -> np.ndarray:
-    """Sum ``octaves`` Perlin layers. Each layer is ``lacunarity`` times finer and ``persistence`` times weaker.
+    """Perlin fBm on the cells ``origin + (row, col)`` for ``shape`` rows and columns, in float64.
 
-    Returns values rescaled to [0, 1].
+    The first octave has lattice cells ``period`` cells wide. Each later octave is ``lacunarity`` times
+    finer and ``persistence`` times weaker. Values are in about [-1, 1]; a 128-cell window at period 32
+    spans about 1.05.
     """
-    rng = np.random.default_rng(seed)
-    total = np.zeros(shape)
-    amplitude = 1.0
-    for _ in range(octaves):
-        total += amplitude * perlin(shape, period, rng)
-        period /= lacunarity
-        amplitude *= persistence
-    return (total - total.min()) / (total.max() - total.min())
+    noise = FastNoiseLite(seed=int(seed))
+    noise.noise_type = NoiseType.NoiseType_Perlin
+    noise.frequency = 1.0 / period
+    noise.fractal_type = FractalType.FractalType_FBm
+    noise.fractal_octaves = octaves
+    noise.fractal_gain = persistence
+    noise.fractal_lacunarity = lacunarity
+    rows = origin[0] + np.arange(shape[0])
+    cols = origin[1] + np.arange(shape[1])
+    y, x = np.meshgrid(rows, cols, indexing="ij")
+    coords = np.stack([x.ravel(), y.ravel()]).astype(np.float32)
+    return noise.gen_from_coords(coords).reshape(shape).astype(np.float64)

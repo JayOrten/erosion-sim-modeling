@@ -1,6 +1,6 @@
 # Plan: infinite eroded terrain with InfiniteDiffusion and a two-level hierarchy
 
-Status: draft. No steps started.
+Status: draft. Step 1 in progress: terrain switched to FastNoiseLite, `world` data generated.
 
 ## Goal
 
@@ -45,7 +45,7 @@ The world pipeline uses two unrelated kinds of noise. Keep them apart.
   per window from a key. A different noise field gives a different sample.
   - The key leaves out `dT`, so every elapsed time starts from the same noise. Only the `dT`
     conditioning changes between them, and the terrain changes smoothly over time instead of
-    jumping. Direct mode in `generate.batched_rollout` already does this, with key `(seed, 0)`.
+    jumping. Direct mode in `predict.batched_rollout` already does this, with key `(seed, 0)`.
   - The world keeps this: its noise depends on (seed, level, y, x), never on `dT` (step 2).
 
 ### Windows and resolutions
@@ -131,7 +131,7 @@ with unit standard deviation. Our `σ_data` is 1.06, so start near σ = 5.
   - Coarse window: about 4 periods.
   - Longer elapsed times spread influence farther, so they may need more context. Deferred.
 - **Two levels, both EDM diffusion models with the existing U-Net.** First pass, with a world period of
-  32 cells, so the existing 128² runs can train both levels:
+  32 cells, so 128² runs can train both levels:
   - Coarse: 4 m cells. Predicts the coarse `Δz` from the coarse `z_a`. Windows of 32 coarse cells
     (128 m, 4 periods), stride 16.
   - Fine: 1 m cells. Predicts the fine `Δz` from the fine `z_a` and the coarse `Δz`, upsampled and
@@ -141,8 +141,9 @@ with unit standard deviation. Our `σ_data` is 1.06, so start near σ = 5.
 - **T = 2 at both levels**, split at about σ = 5. See "Why T = 2".
 - **Parameters and `dT` are the same everywhere in a world** and are given to both levels.
 - **Diffusion noise is shared across `dT`**, as in the current direct mode.
-- **Data: existing 128² runs first.** Step 9 generates large-domain data only once the machinery works.
-  Scaling up comes later.
+- **Data: 128² runs first**, the `world` profile: the size of the `full` dataset, with FastNoiseLite
+  terrain and the period fixed at 32 cells. Step 9 generates large-domain data only once the machinery
+  works. Scaling up comes later.
 - **Deferred:**
   - base level and outlets (where water leaves an infinite world);
   - how much context drainage needs;
@@ -156,23 +157,33 @@ with unit standard deviation. Our `σ_data` is 1.06, so start near σ = 5.
 
 ### 1. Starting terrain at any coordinate
 
-Make the Perlin fBm starting terrain a function of (seed, y, x), so any region can be computed alone.
+Add a function to `world/` that returns the starting terrain for any region, from FastNoiseLite with
+the same settings as the training data.
 
-Why: the world's input terrain has to exist everywhere. Perlin noise is defined at every coordinate,
-but `datagen/src/erosion_datagen/terrain.py` does not compute it that way. Two things tie it to one
-array:
+Why: the world's input terrain has to exist everywhere, and match what the models were trained on.
 
-- Perlin noise places a random direction at each point of a square grid and interpolates between
-  them. `perlin` draws those directions for the whole array at once from one random generator. A
-  different array size or position draws different directions. Standard Perlin noise (Perlin 2002)
-  gets each direction from a hash of the grid point instead. Use that.
-- `fbm` rescales each array to [0, 1] by its own min and max. Drop the rescale and use a fixed
-  amplitude, chosen so terrain heights match the training data (about 64 m of relief).
+Done in `datagen` already:
 
-The coarse input is the 4×4 block mean of the fine input.
+- The hand-written Perlin generator kept an array-wide state that tied the terrain to one array:
+  - it drew each lattice point's gradient direction in order from one random stream;
+  - it rescaled each array to [0, 1] by its own min and max.
+- `datagen/src/erosion_datagen/terrain.py` now uses FastNoiseLite (`pyfastnoiselite`). FastNoiseLite
+  computes each gradient from a hash of the seed and the lattice point, and sums the octaves with a
+  fixed scale, so any region can be computed on its own. Heights are `64 m × fBm`. A 128² window at
+  period 32 then spans about 68 m.
+- The `world` data profile (128² runs, period fixed at 32 cells) was generated with it.
 
-Check-in: a test that two overlapping queries agree. A render of a large region next to training
-terrain.
+Left for this step:
+
+- `world/terrain.py`: the same FastNoiseLite settings, in the main environment. It cannot import
+  `erosion_datagen`, which runs on Python 3.10, so it is a short copy. A test checks it against snapshot
+  0 of `world` dataset runs, which is the raw starting terrain.
+- The coarse input is the 4×4 block mean of the fine input.
+- Limit: FastNoiseLite works in 32-bit floats. Coordinates up to about 10⁵ cells give smooth noise.
+  At 10⁶ it starts to wobble, and at 10⁷ it breaks into steps.
+
+Check-in: the test against the dataset, a test that two overlapping queries agree, and a render of a
+large region next to training terrain.
 
 ### 2. Diffusion noise at any coordinate
 
@@ -195,7 +206,7 @@ Check-in: a test that two overlapping queries agree.
 Change how terrain is scaled into and out of the model, so the scale no longer depends on the window.
 
 What the normalizer is: the network works on numbers of a similar size, not on meters. `Normalizer`
-in `data.py`, with `ErosionPairs` and `generate.predict_batch`, converts to and from model units, in
+in `data.py`, with `ErosionPairs` and `predict.predict_batch`, converts to and from model units, in
 training and in generation:
 
 - Input: `(z_a - min) / relief`, using the window's own min and relief.
@@ -210,7 +221,7 @@ Averaging them mixes two different scales.
 
 Change:
 
-- Input: `(z_a - window mean) / H`, where `H` is fixed (64 m, the dataset's starting relief).
+- Input: `(z_a - window mean) / H`, where `H` is fixed (64 m, the terrain's height scale in `datagen`).
   Subtracting each window's own mean is fine, since raising or lowering the whole terrain does not
   change `Δz`. Only the scale must be shared.
 - Target: `Δz / (H · target_scale)`. `target_scale` already depends only on parameters and `dT`, which
@@ -226,7 +237,7 @@ Check-in: tests pass. Existing checkpoints evaluate the same as before.
 
 ### 4. Training datasets for the two levels
 
-Build one dataset per level from the existing 128² runs.
+Build one dataset per level from the `world` 128² runs.
 
 - `ErosionCrops`, fine level: random 64² crops of the runs, every elapsed time, random flips and 90°
   rotations. A second input channel holds the run's true coarse `Δz` (4×4 block mean of `z_b - z_a`),
@@ -239,9 +250,7 @@ Build one dataset per level from the existing 128² runs.
     the coarse model supplies it instead. Its errors are not covered yet (see Deferred).
 - `ErosionCoarse`, coarse level: whole runs averaged to 32², with flips and rotations.
 - Both use the scaling from step 3.
-- Both use only runs whose terrain period is near the world's: 48 cells or less keeps 1,560 of the
-  8,000 training runs (`select_runs(params, period=(32, 48))`). See Decisions for why the period
-  matters.
+- Every `world` run has the world's period, 32 cells. See Decisions for why the period matters.
 
 Check-in: plots of a few items from each. The fine target, block-averaged, matches the coarse target.
 
@@ -294,12 +303,12 @@ Check-in, as tests:
 - Querying regions in different orders gives identical results.
 - Clearing the cache partway through changes nothing.
 - A small query equals the same crop of a larger query.
-- Coordinates far from the origin (around 10⁶) work.
+- Coordinates far from the origin (around 10⁵) work. See the limit in step 1.
 
 ### 9. Large-domain data, if needed
 
 Generate simulator runs on large domains, so the coarse level sees well beyond a fine window. Do this
-only once steps 1 to 8 work on the existing data.
+only once steps 1 to 8 work on the `world` data.
 
 - World period of 128 cells. The coarse window then covers 512 m, so domains must be larger than that
   for crops away from the edge: 1024² domains with the period fixed near 128 cells, and about 11

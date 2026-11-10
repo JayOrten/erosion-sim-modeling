@@ -13,6 +13,7 @@ dependencies = [
     "landlab==2.9.*",
     "matplotlib>=3.8",
     "numpy>=1.26,<2",
+    "pyfastnoiselite==0.0.7",
     "pyvista>=0.44",
     "richdem==0.3.4",
     # richdem imports pkg_resources, which setuptools 81 removes.

@@ -23,7 +23,7 @@ from landlab.components import FastscapeEroder, FlowAccumulator, LinearDiffuser
 from landlab.utils.suppress_output import suppress_output
 
 from .config import ARTIFACTS_DIR, Config
-from .terrain import fbm
+from .terrain import SEED_LIMIT, fbm
 
 # Columns of the Latin hypercube, in order.
 PARAMS = ("K_ref", "D", "m", "U", "period", "persistence")
@@ -63,7 +63,7 @@ def sample_params(cfg: Config, split: str) -> dict[str, np.ndarray]:
         "U": np.where(uplifted, K_ref * _log_uniform(np.clip(u_rest, 0, 1), *cfg.U_over_K), 0.0),
         "period": _log_uniform(u[:, 4], *cfg.period),
         "persistence": cfg.persistence[0] + u[:, 5] * (cfg.persistence[1] - cfg.persistence[0]),
-        "terrain_seed": np.array([keyed_rng(cfg, split, "terrain", i).integers(2**32) for i in range(n)]),
+        "terrain_seed": np.array([keyed_rng(cfg, split, "terrain", i).integers(SEED_LIMIT) for i in range(n)]),
     }
 
 

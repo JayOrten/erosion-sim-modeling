@@ -10,6 +10,7 @@ from erosion_datagen.simulate import (
     simulate,
     starting_terrain,
 )
+from erosion_datagen.terrain import fbm
 
 CFG = PROFILES["smoke"]
 
@@ -76,3 +77,10 @@ def test_make_dataset_round_trips(tmp_path):
         dt=CFG.dt, steps=CFG.steps, snapshot_every=CFG.snapshot_every,
     )
     np.testing.assert_array_equal(snapshots[0], alone)
+
+
+def test_fbm_overlapping_regions_agree():
+    big = fbm((40, 50), seed=7, period=16.0, origin=(-10, 100_000))
+    small = fbm((12, 9), seed=7, period=16.0, origin=(5, 100_020))
+    np.testing.assert_array_equal(small, big[15:27, 20:29])
+    assert not np.array_equal(big, fbm((40, 50), seed=8, period=16.0, origin=(-10, 100_000)))

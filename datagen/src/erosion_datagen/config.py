@@ -20,8 +20,9 @@ class Config:
     snapshot_every: int
     dt: float = 100.0  # yr per step
     cell_size: float = 1.0  # m
-    height: float = 64.0  # m, starting relief
-    # Starting terrain (fbm). period is in cells.
+    # m per unit of fBm. A 128-cell window at period 32 then spans about 67 m.
+    height: float = 64.0
+    # Starting terrain (fbm in terrain.py). period is in cells.
     period: tuple[float, float] = (32.0, 256.0)  # log-uniform
     persistence: tuple[float, float] = (0.35, 0.65)  # uniform
     octaves: int = 5
@@ -77,5 +78,17 @@ PROFILES = {
         test_runs=1_000,
         steps=500,
         snapshot_every=10,
+    ),
+    # The full dataset's size, with the period fixed at the infinite world's 32 cells
+    # (docs/plans/infinite-plan.md).
+    "world": Config(
+        profile="world",
+        shape=(128, 128),
+        train_runs=8_000,
+        val_runs=1_000,
+        test_runs=1_000,
+        steps=500,
+        snapshot_every=10,
+        period=(32.0, 32.0),
     ),
 }
