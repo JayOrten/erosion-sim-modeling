@@ -2,7 +2,7 @@
 
 Generates the erosion datasets that the main project trains on. It has its own environment because it
 uses `richdem` for pit filling, and `richdem` 0.3.4 (its last release) needs Python 3.10 or older and
-numpy 1. See `../docs/simulator-timing.md`.
+numpy 1. See `../docs/notes/simulator-timing.md`.
 
 ## Setup
 

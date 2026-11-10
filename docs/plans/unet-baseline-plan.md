@@ -20,9 +20,9 @@ This is not meant to be the final model. It is the reference that later models m
 
 The end product is two notebooks to work in, backed by code in `src/erosion_sim/`:
 
-- `notebooks/train.ipynb`: pick a profile and a subset of the dataset, train a model, watch the loss,
+- `notebooks/chunk/train.ipynb`: pick a profile and a subset of the dataset, train a model, watch the loss,
   and save a checkpoint.
-- `notebooks/evaluate.ipynb`: load a checkpoint, run the baselines and every metric below, and show
+- `notebooks/chunk/evaluate.ipynb`: load a checkpoint, run the baselines and every metric below, and show
   predictions next to the simulator.
 
 The notebooks stay thin. They set options and call functions from the package, so the same code runs
@@ -37,7 +37,7 @@ components in order:
 
 1. `FlowAccumulator` routes water downhill (D8: each node drains to its steepest of 8 neighbors) and
    computes drainage area. Water is routed over a copy of the terrain whose pits are filled with
-   `richdem` (see `docs/simulator-timing.md`).
+   `richdem` (see `docs/notes/simulator-timing.md`).
 2. `FastscapeEroder` cuts channels with the stream power law, `dz/dt = -K A^m S^n`.
 3. `LinearDiffuser` smooths hillslopes, `dz/dt = D ∇²z`.
 
@@ -135,7 +135,7 @@ SHA-256 and seed NumPy's PCG64 from it. One stream for terrain, one for paramete
 `datagen/README.md`.
 
 **Speed.** One 500-step run takes about 1.9 s on one core, with `OMP_NUM_THREADS=1`. See
-`docs/simulator-timing.md`.
+`docs/notes/simulator-timing.md`.
 
 **Parallelism.** `multiprocessing`, one run per task, across the 32 CPU cores. 10,000 runs take
 about 10 minutes.
@@ -234,7 +234,7 @@ Time one run at 128×128 with pit routing on. Profile it to see how the time spl
 routing, pit routing, incision, diffusion, and Python overhead. Estimate the cost of the full dataset
 on 32 cores.
 
-Done. Results in `docs/simulator-timing.md`. Pit routing took 99% of the time. Turning it off left
+Done. Results in `docs/notes/simulator-timing.md`. Pit routing took 99% of the time. Turning it off left
 undrained basins, so pits are now filled with `richdem` in a separate environment, `datagen/`.
 
 ### 2. Choose the parameters and ranges
@@ -287,7 +287,7 @@ Check-in: review the architecture and parameter count.
 ### 8. Write training and the training notebook, and overfit a tiny set
 
 Write `train.py`: AdamW, cosine learning rate schedule, validation each epoch, checkpoint on best
-validation loss. Write `notebooks/train.ipynb` on top of it. First train on 10 examples until the
+validation loss. Write `notebooks/chunk/train.ipynb` on top of it. First train on 10 examples until the
 loss is near zero. If it cannot memorize 10 examples, the pipeline is broken.
 
 Check-in: overfit result.
@@ -309,7 +309,7 @@ Check-in: loss curves.
 
 ### 11. Write the evaluation and the evaluation notebook
 
-Write `evaluate.py` with the baselines and every metric above. Write `notebooks/evaluate.ipynb` on
+Write `evaluate.py` with the baselines and every metric above. Write `notebooks/chunk/evaluate.ipynb` on
 top of it.
 
 Check-in: results.
@@ -330,7 +330,7 @@ Record results, failures, and costs in `docs/`. List what the next model should 
 
 - **Grid size.** 128×128.
 - **Pit handling.** Fill pits with `richdem`, then route with `FlowAccumulator`. Generation runs in
-  its own environment, `datagen/`. See `docs/simulator-timing.md`.
+  its own environment, `datagen/`. See `docs/notes/simulator-timing.md`.
 - **Training order.** Time only first, on a narrow subset. Then widen.
 - **Dataset.** One large, varied dataset, generated once. Vary `K`, `D`, terrain `period` and
   `persistence`, and anything else worth varying. Train on subsets.

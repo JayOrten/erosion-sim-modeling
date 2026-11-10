@@ -13,7 +13,7 @@ from statistics import NormalDist
 import torch
 from torch import nn
 
-from .model import UNet
+from .model import UNet, zero_edges
 
 # Noise levels below are multiples of sigma_data. EDM's defaults assume images with sigma_data = 0.5,
 # so each is rescaled from that.
@@ -60,9 +60,7 @@ class Denoiser(nn.Module):
         return (torch.log(sigma / self.sigma_data) - low) / (high - low)
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor, noisy: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
-        interior = torch.zeros_like(noisy)
-        interior[..., 1:-1, 1:-1] = 1
-        noisy = noisy * interior
+        noisy = zero_edges(noisy)
         s = sigma.reshape(-1, 1, 1, 1).to(noisy.dtype)
         sd = self.sigma_data
         c_skip = sd**2 / (s**2 + sd**2)
@@ -70,7 +68,7 @@ class Denoiser(nn.Module):
         c_in = 1 / (s**2 + sd**2).sqrt()
         net_cond = torch.cat([cond, self.noise_feature(sigma.to(cond.dtype))[:, None]], dim=1)
         out = self.net(torch.cat([x, c_in * noisy], dim=1), net_cond)
-        return (c_skip * noisy + c_out * out) * interior
+        return zero_edges(c_skip * noisy + c_out * out)
 
 
 def loss_weight(sigma: torch.Tensor, sigma_data: float) -> torch.Tensor:
@@ -114,11 +112,8 @@ def initial_noise(keys: list[tuple], shape: tuple[int, int]) -> torch.Tensor:
 
     Drawn on the CPU, so a key gives the same noise on any device.
     """
-    noise = torch.stack([torch.randn(1, *shape, generator=torch.Generator().manual_seed(noise_seed(*k)))
-                         for k in keys])
-    noise[..., [0, -1], :] = 0
-    noise[..., :, [0, -1]] = 0
-    return noise
+    return zero_edges(torch.stack([torch.randn(1, *shape, generator=torch.Generator().manual_seed(noise_seed(*k)))
+                                   for k in keys]))
 
 
 def sigma_steps(steps: int, sigma_data: float) -> torch.Tensor:

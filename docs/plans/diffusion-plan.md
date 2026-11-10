@@ -5,7 +5,7 @@ Status: steps 1-5 and 7 done. Step 6 needs the sampler step count from the sweep
 ## Goal
 
 Train a diffusion model that predicts eroded terrain from the same inputs as the U-Net baseline (see
-`docs/unet-baseline-plan.md`), then compare the two approaches on the same validation pairs.
+`docs/plans/unet-baseline-plan.md`), then compare the two approaches on the same validation pairs.
 
 A diffusion model learns a distribution and draws samples from it. It starts from pure noise and
 removes the noise step by step. The regression U-Net instead learns the mean of the possible answers.
@@ -107,7 +107,7 @@ Train on the same data as the regression `fixed_dt` run: one elapsed time (10,00
 - Use the same step budget as regression first. Increase it if the validation loss is still falling.
 - Pick the number of sampling steps by looking at the final metrics for 8, 16, 32, and 64 steps.
   `evaluate.step_sweep` runs this, on the same pairs and noise for every step count (section 7.6 of
-  `notebooks/evaluate.ipynb`).
+  `notebooks/chunk/evaluate.ipynb`).
 
 Check-in: training curves and a few samples. Agree on the step count.
 
@@ -126,7 +126,7 @@ Evaluate both models on the same validation pairs with the existing metrics, plu
 - Rollout error and the GIF comparison run both models over the same runs.
 - Speed: one diffusion prediction costs `steps` network calls (about 2× that with Heun). Report time
   per prediction for both.
-- A section in `notebooks/evaluate.ipynb` runs all of this from two checkpoint paths.
+- A section in `notebooks/chunk/evaluate.ipynb` runs all of this from two checkpoint paths.
 
 Check-in: read the results together. Decide whether to remove regression, keep it, or change the
 diffusion setup.
@@ -146,7 +146,7 @@ terrain (random access over time). Compare it with the regression `variable_dt` 
   pass over every pair (about 53,000 steps at batch 64) with early stopping. About 3.5 hours on the
   laptop GPU. No code changes: `get_config("variable_dt", "diffusion")`.
 - Use the sampler step count chosen in step 6.
-- Evaluate with sections 6 and 7 of `notebooks/evaluate.ipynb`, with `COMPARE_PROFILE =
+- Evaluate with sections 6 and 7 of `notebooks/chunk/evaluate.ipynb`, with `COMPARE_PROFILE =
   "variable_dt"`. Look at error and spread against elapsed time: the start terrain determines less
   of the result the further ahead the query, so the spread should grow with elapsed time.
 - Compare direct prediction (one call from t = 0) with rollout (chained calls), for both models.

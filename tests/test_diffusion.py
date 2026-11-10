@@ -213,7 +213,7 @@ def test_predict_and_rollout_with_a_diffusion_model(data_root, tmp_path):
 
     from erosion_sim.config import get_config
     from erosion_sim.data import load_params
-    from erosion_sim.generate import predict, rollout
+    from erosion_sim.predict import predict, rollout
     from erosion_sim.train import load_checkpoint, train
 
     out = tmp_path / "diffusion-smoke.pt"
@@ -237,7 +237,7 @@ def test_predict_and_rollout_with_a_diffusion_model(data_root, tmp_path):
     assert frames.shape == (4, *z0.shape) and np.isfinite(frames).all()
 
     # Batched over runs, each run gets the frames it would get alone.
-    from erosion_sim.generate import batched_rollout
+    from erosion_sim.predict import batched_rollout
 
     starts = np.load(data_root / "val" / "snapshots.npy")[:3, 0].astype(np.float64)
     for mode in ("rollout", "direct"):

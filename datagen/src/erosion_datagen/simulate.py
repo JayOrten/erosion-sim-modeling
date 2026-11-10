@@ -3,7 +3,7 @@
 import os
 
 # Landlab's components run slower on many threads at this grid size, so use one per process. This must
-# be set before Landlab loads. See docs/simulator-timing.md.
+# be set before Landlab loads. See docs/notes/simulator-timing.md.
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import hashlib

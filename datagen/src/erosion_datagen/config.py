@@ -9,7 +9,7 @@ ARTIFACTS_DIR = Path(__file__).resolve().parents[3] / "artifacts"
 
 @dataclass(frozen=True)
 class Config:
-    """Settings for one dataset. Ranges are (low, high); see docs/unet-baseline-plan.md."""
+    """Settings for one dataset. Ranges are (low, high); see docs/plans/unet-baseline-plan.md."""
 
     profile: str
     shape: tuple[int, int]

@@ -1,4 +1,4 @@
-"""Train the U-Net on snapshot pairs."""
+"""Train a model on snapshot pairs, and load saved checkpoints."""
 
 import math
 import time
@@ -11,19 +11,10 @@ import torch
 from torch.utils.data import DataLoader, Sampler, Subset
 
 from .config import Config
-from .data import ARTIFACTS_DIR, COND_NAMES, ErosionPairs, Normalizer, select_runs
+from .data import COND_NAMES, ErosionPairs, Normalizer, load_params, select_runs
 from .diffusion import VAL_SIGMAS, Denoiser, denoising_loss, step_generator, training_loss
 from .model import UNet, count_parameters
-
-
-def checkpoint_path(profile: str, objective: str = "regression") -> Path:
-    """Where training saves the best checkpoint for ``profile`` and ``objective``."""
-    return ARTIFACTS_DIR / f"{objective}-{profile}.pt"
-
-
-def last_checkpoint_path(best: Path) -> Path:
-    """Where the latest state goes, next to the best checkpoint: <objective>-<profile>-last.pt."""
-    return best.with_name(f"{best.stem}-last{best.suffix}")
+from .paths import checkpoint_path, data_root as resolve_root, last_checkpoint_path
 
 
 # Config fields that may differ when resuming: they do not change what is trained.
@@ -55,10 +46,10 @@ def training_order(size: int, count: int, seed: int) -> np.ndarray:
 
 def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[ErosionPairs, ErosionPairs, Normalizer]:
     """Training and validation pairs for ``cfg``, with a normalizer fitted on the training runs."""
-    root = Path(data_root) if data_root is not None else ARTIFACTS_DIR / "data" / cfg.data_profile
+    root = resolve_root(cfg.data_profile, data_root)
     datasets = []
     for split in ("train", "val"):
-        params = dict(np.load(root / split / "params.npz"))
+        params, _ = load_params(root / split)
         datasets.append((root / split, select_runs(params, **dict(cfg.runs))))
     (train_path, train_runs), (val_path, val_runs) = datasets
     normalizer = Normalizer.fit(train_path, scale=cfg.scale, runs=train_runs)
