@@ -13,15 +13,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "artifacts"
-
 # Scalars the model is conditioned on, in order. D and K do not depend on height scale when n = 1;
 # U does, so it is divided by the start's relief.
 COND_NAMES = ("log10_dT", "log10_K", "log10_D", "m", "U_over_relief")
-
-
-def dataset_dir(profile: str, split: str) -> Path:
-    return ARTIFACTS_DIR / "data" / profile / split
 
 
 def load_params(path: Path) -> tuple[dict[str, np.ndarray], dict]:
@@ -61,6 +55,10 @@ def cond_values(params, runs, dT, relief) -> np.ndarray:
 class Normalizer:
     """Fixed scalings, fitted on the training split and reused for every split and for inference.
 
+    It owns every conversion between meters and model units, for training and for prediction:
+    ``input`` (start heightmap), ``change_size`` (meters per unit of the target), and ``conditioning``.
+
+    - The input is the start heightmap scaled to [0, 1] by its own min and relief.
     - Conditioning scalars are mapped linearly so the training range becomes [0, 1].
     - The target is ``(z_b - z_a) / relief(z_a)``. With ``scale="fitted"``, it is further divided by
       ``coef * (K_ref * dT) ** power``, the typical RMS (root mean square) of that change, so short
@@ -116,6 +114,22 @@ class Normalizer:
         low, high = np.array(self.cond_low), np.array(self.cond_high)
         return (raw - low) / np.where(high > low, high - low, 1.0)
 
+    def input(self, z_a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Model input for start heightmaps ``z_a`` (..., H, W) in m: each scaled to [0, 1] by its own
+        min and relief. Returns (input, relief), with relief of shape (...)."""
+        z_a = np.asarray(z_a, dtype=np.float64)
+        low = z_a.min(axis=(-2, -1), keepdims=True)
+        relief = np.ptp(z_a, axis=(-2, -1), keepdims=True)
+        return (z_a - low) / relief, relief[..., 0, 0]
+
+    def change_size(self, relief, K_ref, dT):
+        """Meters per unit of the normalized change: ``relief * target_scale(K_ref, dT)``."""
+        return relief * self.target_scale(K_ref, dT)
+
+    def conditioning(self, params: dict, runs, dT, relief) -> np.ndarray:
+        """Normalized conditioning scalars, shape (len(runs), len(COND_NAMES))."""
+        return self.cond(cond_values(params, runs, dT, relief))
+
     def target_scale(self, K_ref, dT):
         """Typical size of the relief-normalized change. Works on numbers, arrays, or tensors."""
         if self.scale == "relief":
@@ -164,18 +178,28 @@ class ErosionPairs(Dataset):
     def __len__(self) -> int:
         return len(self.runs) * len(self.pairs)
 
+    def locate(self, index):
+        """(run, start, end) snapshot indices of item ``index``. Works on an array of indices too."""
+        index = np.asarray(index)
+        a, b = self.pairs[index % len(self.pairs)].T
+        return self.runs[index // len(self.pairs)], a, b
+
+    def elapsed(self, index):
+        """Elapsed time (yr) of item ``index``, or of an array of indices."""
+        _, a, b = self.locate(index)
+        return self.times[b] - self.times[a]
+
     def __getitem__(self, index: int) -> dict:
-        run = int(self.runs[index // len(self.pairs)])
-        a, b = (int(v) for v in self.pairs[index % len(self.pairs)])
+        run, a, b = (int(v) for v in self.locate(index))
         z_a = np.array(self.snapshots[run, a], dtype=np.float32)  # copies out of the read-only memory map
         z_b = np.array(self.snapshots[run, b], dtype=np.float32)
-        low = float(z_a.min())
-        relief = float(z_a.max()) - low
+        x, relief = self.normalizer.input(z_a)
+        relief = float(relief)
         dT = float(self.times[b] - self.times[a])
         scale = float(self.normalizer.target_scale(self.params["K_ref"][run], dT))
-        cond = self.normalizer.cond(cond_values(self.params, np.array([run]), np.array([dT]), relief)[0])
+        cond = self.normalizer.conditioning(self.params, np.array([run]), np.array([dT]), relief)[0]
         return {
-            "x": torch.from_numpy((z_a - low) / relief)[None],
+            "x": torch.from_numpy(x.astype(np.float32))[None],
             "y": torch.from_numpy((z_b - z_a) / (relief * scale))[None],
             "cond": torch.from_numpy(cond.astype(np.float32)),
             "z_a": torch.from_numpy(z_a),

@@ -7,6 +7,17 @@ from torch import nn
 from torch.nn import functional as F
 
 
+def zero_edges(t: torch.Tensor) -> torch.Tensor:
+    """``t`` (..., H, W) with its outer ring of cells set to zero.
+
+    The simulator holds its edge cells at a fixed height, so their change is always zero. Every model
+    output and the diffusion noise go through this one function.
+    """
+    interior = torch.zeros_like(t)
+    interior[..., 1:-1, 1:-1] = 1
+    return t * interior
+
+
 class SinusoidalFeatures(nn.Module):
     """Map each scalar in [0, 1] to sines and cosines at ``frequencies`` geometrically spaced frequencies.
 
@@ -142,10 +153,7 @@ class UNet(nn.Module):
             if level > 0:
                 h = self.upsample[i](F.interpolate(h, scale_factor=2, mode="nearest"))
 
-        y = self.out(F.silu(self.out_norm(h)))
-        edges = torch.ones_like(y)
-        edges[..., 1:-1, 1:-1] = 0
-        return y * (1 - edges)
+        return zero_edges(self.out(F.silu(self.out_norm(h))))
 
 
 def count_parameters(model: nn.Module) -> int:

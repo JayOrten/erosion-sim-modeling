@@ -2,7 +2,8 @@ import numpy as np
 
 from erosion_sim.config import PROFILES
 from erosion_sim.data import load_params
-from erosion_sim.generate import comparison_gif, rollout
+from erosion_sim.evaluate import comparison_gif
+from erosion_sim.predict import rollout
 from erosion_sim.train import load_checkpoint, train
 
 

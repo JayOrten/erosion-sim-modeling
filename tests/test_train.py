@@ -69,7 +69,7 @@ def test_checkpoint_names_follow_the_objective():
 
     import pytest
 
-    from erosion_sim.train import checkpoint_path
+    from erosion_sim.paths import checkpoint_path
 
     assert checkpoint_path("smoke").name == "regression-smoke.pt"
     assert checkpoint_path("smoke", "diffusion").name == "diffusion-smoke.pt"

@@ -1,4 +1,4 @@
-"""Step 1 of ../docs/unet-baseline-plan.md: time and profile one Landlab erosion run.
+"""Step 1 of ../docs/plans/unet-baseline-plan.md: time and profile one Landlab erosion run.
 
 Run from datagen/ with: uv run python scripts/time_simulator.py
 """
