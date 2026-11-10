@@ -47,3 +47,21 @@ def test_lags_and_run_selection(dataset_path):
     assert len(data) == 2 * (SNAPS - 2)
     assert all(data[i]["end"] - data[i]["start"] == 2 for i in range(len(data)))
     assert {data[i]["run"] for i in range(len(data))} == {0, 1}
+
+
+def test_fixed_height_scale_is_the_same_for_every_window(dataset_path):
+    norm = Normalizer.fit(dataset_path, height=64.0)
+    assert norm.height == 64.0
+    z = np.random.default_rng(0).normal(size=(2, SIZE, SIZE)) * 10
+    x, relief = norm.input(z)
+    np.testing.assert_array_equal(relief, [64.0, 64.0])
+    np.testing.assert_allclose(x.mean(axis=(1, 2)), 0, atol=1e-12)
+    # Raising a window changes nothing; doubling its relief doubles the input instead of rescaling it.
+    np.testing.assert_allclose(norm.input(z + 100)[0], x)
+    np.testing.assert_allclose(norm.input(2 * z)[0], 2 * x)
+
+    data = ErosionPairs(dataset_path, norm)
+    batch = next(iter(DataLoader(data, batch_size=5)))
+    torch.testing.assert_close(batch["relief"], torch.full((5,), 64.0, dtype=torch.float64))
+    z_b = denormalize(batch["y"], batch["z_a"], batch["relief"], batch["scale"])
+    torch.testing.assert_close(z_b, batch["z_b"], atol=1e-4, rtol=0)

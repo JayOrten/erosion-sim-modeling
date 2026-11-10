@@ -46,13 +46,18 @@ class Denoiser(nn.Module):
     - ``cond``: (batch, cond_dim) normalized conditioning scalars.
     - ``noisy``: (batch, 1, H, W) noisy normalized change.
     - ``sigma``: (batch,) noise level of each sample.
-    - Output: (batch, 1, H, W). Edge nodes are zero, since the simulator holds edges fixed.
+    - Output: (batch, 1, H, W). With ``fixed_edges``, edge nodes are zero, since the simulator holds
+      edges fixed.
     """
 
-    def __init__(self, cond_dim: int, sigma_data: float = 1.0, **unet_kwargs):
+    def __init__(self, cond_dim: int, sigma_data: float = 1.0, fixed_edges: bool = True, **unet_kwargs):
         super().__init__()
         self.sigma_data = float(sigma_data)
-        self.net = UNet(cond_dim + 1, in_channels=2, **unet_kwargs)
+        self.fixed_edges = fixed_edges
+        self.net = UNet(cond_dim + 1, in_channels=2, fixed_edges=fixed_edges, **unet_kwargs)
+
+    def edges(self, t: torch.Tensor) -> torch.Tensor:
+        return zero_edges(t) if self.fixed_edges else t
 
     def noise_feature(self, sigma: torch.Tensor) -> torch.Tensor:
         """EDM's ``c_noise = ln(sigma) / 4``, mapped so the sampler's range becomes [0, 1]."""
@@ -60,7 +65,7 @@ class Denoiser(nn.Module):
         return (torch.log(sigma / self.sigma_data) - low) / (high - low)
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor, noisy: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
-        noisy = zero_edges(noisy)
+        noisy = self.edges(noisy)
         s = sigma.reshape(-1, 1, 1, 1).to(noisy.dtype)
         sd = self.sigma_data
         c_skip = sd**2 / (s**2 + sd**2)
@@ -68,7 +73,7 @@ class Denoiser(nn.Module):
         c_in = 1 / (s**2 + sd**2).sqrt()
         net_cond = torch.cat([cond, self.noise_feature(sigma.to(cond.dtype))[:, None]], dim=1)
         out = self.net(torch.cat([x, c_in * noisy], dim=1), net_cond)
-        return zero_edges(c_skip * noisy + c_out * out)
+        return self.edges(c_skip * noisy + c_out * out)
 
 
 def loss_weight(sigma: torch.Tensor, sigma_data: float) -> torch.Tensor:
@@ -107,13 +112,15 @@ def noise_seed(*key) -> int:
     return int.from_bytes(hashlib.sha256(payload).digest()[:8], "little")
 
 
-def initial_noise(keys: list[tuple], shape: tuple[int, int]) -> torch.Tensor:
-    """Unit Gaussian noise of ``shape`` for each key, shape (len(keys), 1, H, W), with zero edges.
+def initial_noise(keys: list[tuple], shape: tuple[int, int], fixed_edges: bool = True) -> torch.Tensor:
+    """Unit Gaussian noise of ``shape`` for each key, shape (len(keys), 1, H, W), with zero edges if
+    ``fixed_edges``.
 
     Drawn on the CPU, so a key gives the same noise on any device.
     """
-    return zero_edges(torch.stack([torch.randn(1, *shape, generator=torch.Generator().manual_seed(noise_seed(*k)))
-                                   for k in keys]))
+    noise = torch.stack([torch.randn(1, *shape, generator=torch.Generator().manual_seed(noise_seed(*k)))
+                         for k in keys])
+    return zero_edges(noise) if fixed_edges else noise
 
 
 def sigma_steps(steps: int, sigma_data: float) -> torch.Tensor:

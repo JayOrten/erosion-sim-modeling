@@ -1,7 +1,9 @@
+from dataclasses import replace
+
 import numpy as np
 import torch
 
-from erosion_sim.config import PROFILES
+from erosion_sim.config import PROFILES, get_config
 from erosion_sim.train import load_checkpoint, train
 
 
@@ -86,3 +88,24 @@ def test_checkpoint_without_objective_loads_as_regression(data_root, tmp_path):
 
     _, _, cfg, _ = load_checkpoint(out, device="cpu")
     assert cfg.objective == "regression"
+
+
+def test_world_scaling_trains_and_loads(data_root, tmp_path):
+    out = tmp_path / "diffusion-smoke.pt"
+    cfg = replace(get_config("smoke", "diffusion"), height=64.0, fixed_edges=False)
+    train(cfg, data_root=data_root, show=False, out=out)
+    model, normalizer, loaded, _ = load_checkpoint(out, device="cpu")
+    assert loaded == cfg
+    assert normalizer.height == 64.0
+    assert not model.fixed_edges and not model.net.fixed_edges
+
+
+def test_old_checkpoint_loads_with_relief_scale_and_fixed_edges(data_root, tmp_path):
+    out = tmp_path / "regression-smoke.pt"
+    train(PROFILES["smoke"], data_root=data_root, show=False, out=out)
+    ckpt = torch.load(out, weights_only=False)
+    del ckpt["config"]["height"], ckpt["config"]["fixed_edges"], ckpt["normalizer"]["height"]
+    torch.save(ckpt, out)
+    model, normalizer, cfg, _ = load_checkpoint(out, device="cpu")
+    assert normalizer.height is None and cfg.height is None
+    assert cfg.fixed_edges and model.fixed_edges

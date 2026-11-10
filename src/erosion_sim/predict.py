@@ -41,7 +41,7 @@ def predict_batch(model, normalizer: Normalizer, z_a: np.ndarray, params: dict, 
         c = torch.as_tensor(cond[rows], dtype=torch.float32, device=device)
         with autocast:
             if diffusion:
-                y = sample(model, x, c, initial_noise(list(keys[rows]), z_a.shape[-2:]), steps)
+                y = sample(model, x, c, initial_noise(list(keys[rows]), z_a.shape[-2:], model.fixed_edges), steps)
             else:
                 y = model(x, c)
         y = y.float()[:, 0].cpu().numpy()

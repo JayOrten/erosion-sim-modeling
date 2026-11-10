@@ -1,6 +1,7 @@
 # Plan: infinite eroded terrain with InfiniteDiffusion and a two-level hierarchy
 
-Status: draft. Step 1 in progress: terrain switched to FastNoiseLite, `world` data generated.
+Status: draft. Step 1 partly done (terrain switched to FastNoiseLite, `world` data generated). Steps 2
+and 3 done.
 
 ## Goal
 
@@ -251,6 +252,8 @@ Build one dataset per level from the `world` 128² runs.
 - `ErosionCoarse`, coarse level: whole runs averaged to 32², with flips and rotations.
 - Both use the scaling from step 3.
 - Every `world` run has the world's period, 32 cells. See Decisions for why the period matters.
+- Only runs without uplift (`U = 0`), about a third of `world`, as for the single-window models. The
+  uplift runs stay in the dataset for later.
 
 Check-in: plots of a few items from each. The fine target, block-averaged, matches the coarse target.
 

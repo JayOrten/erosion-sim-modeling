@@ -19,6 +19,12 @@ class Config:
     # Elapsed times to train on, in snapshot steps (1 = 1,000 yr in the full dataset). None uses all.
     lags: tuple[int, ...] | None = None
     scale: str = "fitted"  # target scaling; see data.Normalizer
+    # Height scale in m. None divides each window by its own relief. A number fixes it for every window,
+    # as the infinite world needs (docs/plans/infinite-plan.md, step 3).
+    height: float | None = None
+    # Edge cells change by zero, as in the simulator. False for world models, whose window edges are not
+    # boundaries.
+    fixed_edges: bool = True
     max_train_samples: int | None = None  # train on only this many fixed pairs (for the overfit test)
     # Model
     channels: tuple[int, ...] = (32, 64, 128, 256)

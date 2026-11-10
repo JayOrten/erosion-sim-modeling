@@ -3,7 +3,7 @@ import math
 import torch
 
 from erosion_sim.data import Normalizer
-from erosion_sim.diffusion import SIGMA_MAX, SIGMA_MIN, Denoiser
+from erosion_sim.diffusion import SIGMA_MAX, SIGMA_MIN, Denoiser, initial_noise
 
 COND = 5
 
@@ -245,3 +245,14 @@ def test_predict_and_rollout_with_a_diffusion_model(data_root, tmp_path):
         for r in range(3):
             alone = rollout(model, normalizer, starts[r], params, r, 1000.0, 3, mode, seed=2)
             np.testing.assert_allclose(batch[r], alone, rtol=1e-5, atol=1e-5)
+
+
+def test_free_edges():
+    model = Denoiser(COND, sigma_data=0.7, fixed_edges=False, channels=(8, 16), blocks=1, emb_dim=16, frequencies=4)
+    torch.nn.init.normal_(model.net.out.weight)
+    x, cond, noisy = inputs()
+    y = model(x, cond, noisy, torch.tensor([0.1, 1.0, 10.0]))
+    assert y[..., 0, :].abs().sum() > 0 and y[..., :, -1].abs().sum() > 0
+    noise = initial_noise([(0,), (1,)], (16, 16), fixed_edges=False)
+    assert noise[..., 0, :].abs().sum() > 0
+    assert torch.all(initial_noise([(0,)], (16, 16))[..., 0, :] == 0)

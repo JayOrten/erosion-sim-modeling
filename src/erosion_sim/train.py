@@ -52,7 +52,7 @@ def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[ErosionPa
         params, _ = load_params(root / split)
         datasets.append((root / split, select_runs(params, **dict(cfg.runs))))
     (train_path, train_runs), (val_path, val_runs) = datasets
-    normalizer = Normalizer.fit(train_path, scale=cfg.scale, runs=train_runs)
+    normalizer = Normalizer.fit(train_path, scale=cfg.scale, runs=train_runs, height=cfg.height)
     train = ErosionPairs(train_path, normalizer, runs=train_runs, lags=cfg.lags)
     val = ErosionPairs(val_path, normalizer, runs=val_runs, lags=cfg.lags)
     return train, val, normalizer
@@ -60,7 +60,8 @@ def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[ErosionPa
 
 def build_model(cfg: Config, normalizer: Normalizer) -> UNet | Denoiser:
     """The U-Net for regression, or the U-Net inside an EDM denoiser for diffusion."""
-    unet = dict(channels=cfg.channels, blocks=cfg.blocks, emb_dim=cfg.emb_dim, attention=cfg.attention)
+    unet = dict(channels=cfg.channels, blocks=cfg.blocks, emb_dim=cfg.emb_dim, attention=cfg.attention,
+                fixed_edges=cfg.fixed_edges)
     if cfg.objective == "diffusion":
         return Denoiser(len(COND_NAMES), sigma_data=normalizer.sigma_data, **unet)
     return UNet(len(COND_NAMES), **unet)

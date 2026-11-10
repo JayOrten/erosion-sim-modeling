@@ -14,7 +14,7 @@ import torch
 from torch.utils.data import Dataset
 
 # Scalars the model is conditioned on, in order. D and K do not depend on height scale when n = 1;
-# U does, so it is divided by the start's relief.
+# U does, so it is divided by the height scale: the start's relief, or the fixed height (Normalizer).
 COND_NAMES = ("log10_dT", "log10_K", "log10_D", "m", "U_over_relief")
 
 
@@ -58,9 +58,13 @@ class Normalizer:
     It owns every conversion between meters and model units, for training and for prediction:
     ``input`` (start heightmap), ``change_size`` (meters per unit of the target), and ``conditioning``.
 
-    - The input is the start heightmap scaled to [0, 1] by its own min and relief.
+    - Every height is divided by a height scale. With ``height=None`` it is each start heightmap's own
+      relief, and the input is that heightmap scaled to [0, 1] by its own min and relief. With a fixed
+      ``height`` (m), it is that number for every window, and the input is ``(z_a - mean) / height``.
+      Overlapping windows of the infinite world need the fixed scale, so their model units agree
+      (docs/plans/infinite-plan.md, step 3). Below, "relief" means the height scale.
     - Conditioning scalars are mapped linearly so the training range becomes [0, 1].
-    - The target is ``(z_b - z_a) / relief(z_a)``. With ``scale="fitted"``, it is further divided by
+    - The target is ``(z_b - z_a) / relief``. With ``scale="fitted"``, it is further divided by
       ``coef * (K_ref * dT) ** power``, the typical RMS (root mean square) of that change, so short
       and long elapsed times have targets of similar size. With ``scale="relief"``, it is not.
     - ``sigma_data`` is the RMS of that normalized target over the fitting sample. The diffusion
@@ -73,10 +77,12 @@ class Normalizer:
     coef: float = 1.0
     power: float = 0.0
     sigma_data: float = 1.0
+    height: float | None = None
 
     @classmethod
-    def fit(cls, path: Path, scale: str = "fitted", runs: np.ndarray | None = None, sample: int = 400, seed: int = 0):
-        """Fit on a sample of runs from the dataset at ``path``."""
+    def fit(cls, path: Path, scale: str = "fitted", runs: np.ndarray | None = None, sample: int = 400, seed: int = 0,
+            height: float | None = None):
+        """Fit on a sample of runs from the dataset at ``path``. ``height`` fixes the height scale (m)."""
         if scale not in ("fitted", "relief"):
             raise ValueError("scale must be 'fitted' or 'relief'")
         params, _ = load_params(path)
@@ -91,7 +97,7 @@ class Normalizer:
         starts = sorted({0, count // 5, count // 2, 4 * count // 5} - {count - 1})  # a few start points per run
         for r in chosen:
             s = np.asarray(snapshots[r], dtype=np.float64)
-            reliefs = s.max(axis=(1, 2)) - s.min(axis=(1, 2))
+            reliefs = np.ptp(s, axis=(1, 2)) if height is None else np.full(count, float(height))
             # Conditioning ranges cover every start, since U / relief grows as relief drops.
             cond.append(cond_values(params, np.full(count, r), np.full(count, times[1] - times[0]), reliefs))
             for a in starts:
@@ -108,16 +114,24 @@ class Normalizer:
             power, log_coef = np.polyfit(np.log(kdt), np.log(rms), 1)
             coef = float(np.exp(log_coef))
         sigma_data = float(np.sqrt(np.mean((rms / (coef * kdt**power)) ** 2)))
-        return cls(tuple(map(float, low)), tuple(map(float, high)), scale, coef, float(power), sigma_data)
+        return cls(tuple(map(float, low)), tuple(map(float, high)), scale, coef, float(power), sigma_data,
+                   None if height is None else float(height))
 
     def cond(self, raw: np.ndarray) -> np.ndarray:
         low, high = np.array(self.cond_low), np.array(self.cond_high)
         return (raw - low) / np.where(high > low, high - low, 1.0)
 
     def input(self, z_a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Model input for start heightmaps ``z_a`` (..., H, W) in m: each scaled to [0, 1] by its own
-        min and relief. Returns (input, relief), with relief of shape (...)."""
+        """Model input for start heightmaps ``z_a`` (..., H, W) in m. Returns (input, relief), with the
+        height scale ``relief`` of shape (...).
+
+        With ``height=None``, each heightmap is scaled to [0, 1] by its own min and relief. With a fixed
+        ``height``, the input is ``(z_a - mean) / height`` and ``relief`` is ``height`` everywhere.
+        """
         z_a = np.asarray(z_a, dtype=np.float64)
+        if self.height is not None:
+            relief = np.full(z_a.shape[:-2], self.height)
+            return (z_a - z_a.mean(axis=(-2, -1), keepdims=True)) / self.height, relief
         low = z_a.min(axis=(-2, -1), keepdims=True)
         relief = np.ptp(z_a, axis=(-2, -1), keepdims=True)
         return (z_a - low) / relief, relief[..., 0, 0]
@@ -145,11 +159,12 @@ class ErosionPairs(Dataset):
 
     Each item is a dict:
 
-    - ``x``: (1, H, W) start heightmap, scaled to [0, 1] by its own min and relief.
+    - ``x``: (1, H, W) start heightmap, scaled by ``Normalizer.input``.
     - ``y``: (1, H, W) target, the normalized change (see ``Normalizer``).
     - ``cond``: (len(COND_NAMES),) conditioning scalars, scaled by the normalizer.
     - ``z_a``, ``z_b``: (H, W) the raw heightmaps in m, for evaluation.
-    - ``run``, ``start``, ``end``: snapshot indices; ``relief`` and ``scale`` to undo the normalization.
+    - ``run``, ``start``, ``end``: snapshot indices; ``relief`` (the height scale) and ``scale`` to undo
+      the normalization.
 
     ``lags`` limits which elapsed times are used, in snapshot steps (1 = one snapshot apart). Use it to
     hold elapsed times out of training.
