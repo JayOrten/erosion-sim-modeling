@@ -81,8 +81,11 @@ class Normalizer:
 
     @classmethod
     def fit(cls, path: Path, scale: str = "fitted", runs: np.ndarray | None = None, sample: int = 400, seed: int = 0,
-            height: float | None = None):
-        """Fit on a sample of runs from the dataset at ``path``. ``height`` fixes the height scale (m)."""
+            height: float | None = None, block: int = 1):
+        """Fit on a sample of runs from the dataset at ``path``. ``height`` fixes the height scale (m).
+
+        ``block`` > 1 fits on ``block`` × ``block`` means of the snapshots, as the coarse world level sees them.
+        """
         if scale not in ("fitted", "relief"):
             raise ValueError("scale must be 'fitted' or 'relief'")
         params, _ = load_params(path)
@@ -97,6 +100,8 @@ class Normalizer:
         starts = sorted({0, count // 5, count // 2, 4 * count // 5} - {count - 1})  # a few start points per run
         for r in chosen:
             s = np.asarray(snapshots[r], dtype=np.float64)
+            if block > 1:
+                s = s.reshape(count, s.shape[1] // block, block, s.shape[2] // block, block).mean(axis=(2, 4))
             reliefs = np.ptp(s, axis=(1, 2)) if height is None else np.full(count, float(height))
             # Conditioning ranges cover every start, since U / relief grows as relief drops.
             cond.append(cond_values(params, np.full(count, r), np.full(count, times[1] - times[0]), reliefs))

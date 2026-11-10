@@ -505,6 +505,7 @@ name = "erosion-sim-modeling"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "erosion-terrain" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "pyvista" },
@@ -520,6 +521,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "erosion-terrain", editable = "terrain" },
     { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "numpy", specifier = ">=2.5.4" },
     { name = "pyvista", specifier = ">=0.49.1" },
@@ -531,6 +533,21 @@ requires-dist = [
 dev = [
     { name = "ipykernel", specifier = ">=6.0" },
     { name = "pytest", specifier = ">=8.0" },
+]
+
+[[package]]
+name = "erosion-terrain"
+version = "0.1.0"
+source = { editable = "terrain" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pyfastnoiselite" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pyfastnoiselite", specifier = "==0.0.7" },
 ]
 
 [[package]]
@@ -1512,6 +1529,30 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/da/a8/c5fdbeee588bb8ada9458774f43adf1bdd30bd59157055142183e769a024/pycparser-3.11.tar.gz", hash = "sha256:d875f09c3507d00e1aba0eecc6dcadc1352f30fff09dc6bff2f1c2935e97c2bc", size = 113796, upload-time = "2026-10-09T12:56:59.539Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/90/11/0e6f11117525ff0eec40ebac3d313376f102df93ca44ad9e893ee85e4f89/pycparser-3.11-py3-none-any.whl", hash = "sha256:51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80", size = 51178, upload-time = "2026-10-09T12:56:58.131Z" },
+]
+
+[[package]]
+name = "pyfastnoiselite"
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/09/b57e228ded268c561192ada0616368e05d882f2f4559846df6533a0336e4/pyfastnoiselite-0.0.7-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:323cd4796b3b406a8095d03c61e0d2eb0e2f5b894ae696cf21fabfa7fc16bb0a", size = 106366, upload-time = "2025-12-07T11:40:41.621Z" },
+    { url = "https://files.pythonhosted.org/packages/69/6c/77963be0bd6cd3f9dd52a4439988d8279a96ffc0278177e6d6fd93a38fa2/pyfastnoiselite-0.0.7-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:2f391c5c0b727e3132cf3c5f09d4dab7c5a464f60af7f0bc3b5cda855e4914cb", size = 97741, upload-time = "2025-12-07T11:40:42.785Z" },
+    { url = "https://files.pythonhosted.org/packages/88/ec/ff0faaacc52b40e596142e93e4a313d5cc147e0621d144f9992a460f08f1/pyfastnoiselite-0.0.7-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:3b2012085ec56936903cba0dd83a2e1bbd9c853a40b0924377efaafbcfff2c15", size = 619215, upload-time = "2025-12-07T11:40:44.368Z" },
+    { url = "https://files.pythonhosted.org/packages/68/f7/9b91c4eeace4db8b2b9a756e2a4e981378f14f4ad8c8daf0ac5631a54aa7/pyfastnoiselite-0.0.7-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:98fd99f11b2e0d1f918976f633d49977c896b948552e58034e1e606af7d875ad", size = 632771, upload-time = "2025-12-07T11:40:46.138Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/a8/a8af80b162d74173212583ff136a265abafc4d59755915bcaa38bd223cc1/pyfastnoiselite-0.0.7-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:4d6169506d3dd1df2d90e89d80ed9dc97575c531b6e410da4a1655d76c134472", size = 1568566, upload-time = "2025-12-07T11:40:47.437Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/5a/ea8dcb55cfa7372c682ac345e555f6b2764930a1f5dfb7b1b46e25b15ed7/pyfastnoiselite-0.0.7-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:38c879e8a27687a5c726ce3b1fc6ff1dac3a11f0e1cb98f2d443f1568b0a73af", size = 1637053, upload-time = "2025-12-07T11:40:48.809Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/fa/d21b4060d6377512d6798c109a5bfb7c6ab242882be023f2d628493a37bd/pyfastnoiselite-0.0.7-cp312-cp312-win_amd64.whl", hash = "sha256:caedb539fe02b5ec180917583be70b21fd7ee9abdd636c0496bf3cb4646ed2fc", size = 96459, upload-time = "2025-12-07T11:40:50.489Z" },
+    { url = "https://files.pythonhosted.org/packages/73/18/793730c59081cf4c428d9e026afb7a52fd5570f50cb765ac3d51dced8cbb/pyfastnoiselite-0.0.7-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:b9fff9e05ae2b807e70786cf1e37a45f47ded0e124fe6a8424c5e3e4a624942d", size = 103741, upload-time = "2025-12-07T11:40:51.613Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/30/4319f3f7c816815404acb7fefe97837d8103031c8226d5382a632609ac35/pyfastnoiselite-0.0.7-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:69998a75ff27848832efd24a034d3b2e3aa8fff9a2dd58b9c4477c028064874c", size = 96114, upload-time = "2025-12-07T11:40:53.057Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/ec/53b81ce1ea297cb2d4af8102f03db147ffb2852397293099fcaa5b8a2d31/pyfastnoiselite-0.0.7-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7d88a5e1df8cf78f103e5bcaa6a31e921ad03edb2b3afcfd2a674f4f69e14bd3", size = 612653, upload-time = "2025-12-07T11:40:54.638Z" },
+    { url = "https://files.pythonhosted.org/packages/36/db/46c5e605a08f33946ef8d3c50d9a1fddbf4582b30b5fc44031dc7f4a452d/pyfastnoiselite-0.0.7-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:157577976a131815d521573a69107c2db914179ddede3ebeb202f5aaf687e039", size = 627450, upload-time = "2025-12-07T11:40:55.988Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/0c/8c58f7be55c6568d8a056b7680b38f1b0a70b4237c452fab7cc04678a697/pyfastnoiselite-0.0.7-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:ccd928d2cec0072ebd58922ca09e117389677ad49707ff7004730b4e786c9c25", size = 1565581, upload-time = "2025-12-07T11:40:57.396Z" },
+    { url = "https://files.pythonhosted.org/packages/30/4b/d78dff87473e0586c101f4761c568939669b12e0b271bcf617ee3ec6da24/pyfastnoiselite-0.0.7-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:5e9d753a723968524e4428f78d324c72cc3798edffb7565723893b866c2530b1", size = 1635781, upload-time = "2025-12-07T11:40:58.986Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/1d/2580419cb1090262dccf0be431e4810f64b97c94688df0113c9feb98b168/pyfastnoiselite-0.0.7-cp313-cp313-win_amd64.whl", hash = "sha256:4362d2502b9f99b1ed7a11916e6faffdec43a8da8e3ddbc0278c5e5e89207bfc", size = 96162, upload-time = "2025-12-07T11:41:00.325Z" },
 ]
 
 [[package]]

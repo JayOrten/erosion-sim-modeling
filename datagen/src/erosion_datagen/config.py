@@ -22,7 +22,7 @@ class Config:
     cell_size: float = 1.0  # m
     # m per unit of fBm. A 128-cell window at period 32 then spans about 67 m.
     height: float = 64.0
-    # Starting terrain (fbm in terrain.py). period is in cells.
+    # Starting terrain (erosion_terrain.fbm, in ../terrain). period is in cells.
     period: tuple[float, float] = (32.0, 256.0)  # log-uniform
     persistence: tuple[float, float] = (0.35, 0.65)  # uniform
     octaves: int = 5

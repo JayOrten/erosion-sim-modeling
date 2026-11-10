@@ -18,12 +18,12 @@ import numpy as np
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)  # richdem imports the deprecated pkg_resources
     import richdem
+from erosion_terrain import SEED_LIMIT, fbm
 from landlab import RasterModelGrid
 from landlab.components import FastscapeEroder, FlowAccumulator, LinearDiffuser
 from landlab.utils.suppress_output import suppress_output
 
 from .config import ARTIFACTS_DIR, Config
-from .terrain import SEED_LIMIT, fbm
 
 # Columns of the Latin hypercube, in order.
 PARAMS = ("K_ref", "D", "m", "U", "period", "persistence")

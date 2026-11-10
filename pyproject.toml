@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
     "matplotlib>=3.11.2",
     "numpy>=2.5.4",
+    "erosion-terrain",
     "pyvista>=0.49.1",
     "torch>=2.14.1",
     "tqdm>=4.70.1",
@@ -21,6 +22,9 @@ dev = [
     "ipykernel>=6.0",
     "pytest>=8.0",
 ]
+
+[tool.uv.sources]
+erosion-terrain = { path = "terrain", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

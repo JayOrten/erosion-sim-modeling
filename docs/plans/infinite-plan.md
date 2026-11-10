@@ -1,7 +1,6 @@
 # Plan: infinite eroded terrain with InfiniteDiffusion and a two-level hierarchy
 
-Status: draft. Step 1 partly done (terrain switched to FastNoiseLite, `world` data generated). Steps 2
-and 3 done.
+Status: draft. Steps 1 to 4 done.
 
 ## Goal
 
@@ -163,23 +162,21 @@ the same settings as the training data.
 
 Why: the world's input terrain has to exist everywhere, and match what the models were trained on.
 
-Done in `datagen` already:
+Done:
 
 - The hand-written Perlin generator kept an array-wide state that tied the terrain to one array:
   - it drew each lattice point's gradient direction in order from one random stream;
   - it rescaled each array to [0, 1] by its own min and max.
-- `datagen/src/erosion_datagen/terrain.py` now uses FastNoiseLite (`pyfastnoiselite`). FastNoiseLite
+- The terrain now comes from `erosion_terrain.fbm` (`terrain/`), using FastNoiseLite (`pyfastnoiselite`). FastNoiseLite
   computes each gradient from a hash of the seed and the lattice point, and sums the octaves with a
   fixed scale, so any region can be computed on its own. Heights are `64 m × fBm`. A 128² window at
   period 32 then spans about 68 m.
+- `terrain/` is its own small package, installed by both environments (datagen needs Python 3.10,
+  the main package 3.12), so there is one copy of the terrain code.
 - The `world` data profile (128² runs, period fixed at 32 cells) was generated with it.
-
-Left for this step:
-
-- `world/terrain.py`: the same FastNoiseLite settings, in the main environment. It cannot import
-  `erosion_datagen`, which runs on Python 3.10, so it is a short copy. A test checks it against snapshot
-  0 of `world` dataset runs, which is the raw starting terrain.
-- The coarse input is the 4×4 block mean of the fine input.
+- `world/terrain.py`: `Terrain`, the world's starting terrain with fixed settings, at fine cells and as
+  4×4 block means at coarse cells. A test checks it against snapshot 0 of `world` dataset runs, which
+  is the raw starting terrain.
 - Limit: FastNoiseLite works in 32-bit floats. Coordinates up to about 10⁵ cells give smooth noise.
   At 10⁶ it starts to wobble, and at 10⁷ it breaks into steps.
 

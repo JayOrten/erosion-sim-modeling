@@ -26,7 +26,7 @@ for split in ["train", "val", "test"]:
 Profiles are in `src/erosion_datagen/config.py`. `world` is the dataset for the infinite world
 (`../docs/plans/infinite-plan.md`): the period is fixed at 32 cells.
 
-The starting terrain is Perlin fBm from FastNoiseLite (`src/erosion_datagen/terrain.py`). The
+The starting terrain is Perlin fBm from FastNoiseLite (`erosion_terrain`, in `../terrain/`, shared with the main package). The
 `smoke`, `small`, and `full` datasets on disk were made with an earlier hand-written Perlin generator,
 rescaled to exactly 64 m of relief per run. That code is at commit `15c6de9`; the current code no
 longer reproduces those datasets.

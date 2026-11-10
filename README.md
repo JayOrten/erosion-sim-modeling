@@ -17,6 +17,7 @@ There are two lines of work:
 
 ```
 datagen/                 simulator and dataset generation (its own environment; see datagen/README.md)
+terrain/                 erosion_terrain: the seeded starting terrain, shared by datagen and the world
 src/erosion_sim/
   paths.py               where datasets, checkpoints, and animations live
   config.py              training profiles
@@ -28,7 +29,7 @@ src/erosion_sim/
   hydrology.py           drainage area and pits
   render.py              hillshade and 3D renders
   evaluate/              metrics, chained calls, sampler sweeps, timing, and plots
-  world/                 infinite world (docs/plans/infinite-plan.md)
+  world/                 infinite world (docs/plans/infinite-plan.md): terrain, noise, level datasets
 notebooks/
   chunk/                 dataset, train, evaluate: the single-window work
   world/                 infinite world notebooks (none yet)

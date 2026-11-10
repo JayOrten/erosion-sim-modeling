@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "erosion-terrain"
+version = "0.1.0"
+description = "Seeded Perlin fBm starting terrain, shared by datagen and the main package"
+readme = "README.md"
+# datagen runs on Python 3.10 and the main package on 3.12 or later; both install this.
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "pyfastnoiselite==0.0.7",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

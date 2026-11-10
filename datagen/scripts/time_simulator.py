@@ -9,7 +9,7 @@ import numpy as np
 from landlab import RasterModelGrid
 from landlab.components import FastscapeEroder, FlowAccumulator, LinearDiffuser
 
-from erosion_datagen.terrain import fbm
+from erosion_terrain import fbm
 
 SHAPE = (128, 128)
 HEIGHT = 64.0

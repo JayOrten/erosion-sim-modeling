@@ -10,7 +10,7 @@ from erosion_datagen.simulate import (
     simulate,
     starting_terrain,
 )
-from erosion_datagen.terrain import fbm
+from erosion_terrain import fbm
 
 CFG = PROFILES["smoke"]
 

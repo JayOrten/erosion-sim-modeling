@@ -275,10 +275,10 @@ name = "erosion-datagen"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "erosion-terrain" },
     { name = "landlab" },
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "pyfastnoiselite" },
     { name = "pyvista" },
     { name = "richdem" },
     { name = "setuptools" },
@@ -292,10 +292,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "erosion-terrain", editable = "../terrain" },
     { name = "landlab", specifier = "==2.9.*" },
     { name = "matplotlib", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26,<2" },
-    { name = "pyfastnoiselite", specifier = "==0.0.7" },
     { name = "pyvista", specifier = ">=0.44" },
     { name = "richdem", specifier = "==0.3.4" },
     { name = "setuptools", specifier = "<81" },
@@ -305,6 +305,21 @@ requires-dist = [
 dev = [
     { name = "ipykernel", specifier = ">=6.0" },
     { name = "pytest", specifier = ">=8.0" },
+]
+
+[[package]]
+name = "erosion-terrain"
+version = "0.1.0"
+source = { editable = "../terrain" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pyfastnoiselite" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pyfastnoiselite", specifier = "==0.0.7" },
 ]
 
 [[package]]
