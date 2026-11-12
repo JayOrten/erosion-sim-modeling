@@ -1,8 +1,10 @@
 """Train a model on snapshot pairs, and load saved checkpoints."""
 
+import copy
 import math
 import time
 from dataclasses import asdict, replace
+from functools import partial
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -11,10 +13,12 @@ import torch
 from torch.utils.data import DataLoader, Sampler, Subset
 
 from .config import Config
-from .data import COND_NAMES, ErosionPairs, Normalizer, load_params, select_runs
+from .data import ErosionPairs, Split
 from .diffusion import VAL_SIGMAS, Denoiser, denoising_loss, step_generator, training_loss
 from .model import UNet, count_parameters
-from .paths import checkpoint_path, data_root as resolve_root, last_checkpoint_path
+from .normalization import PARAMETER_NAMES, Scaling, change_rms
+from .paths import checkpoint_path, last_checkpoint_path
+from .world.data import ErosionCoarse, ErosionCrops
 
 
 # Config fields that may differ when resuming: they do not change what is trained.
@@ -44,26 +48,48 @@ def training_order(size: int, count: int, seed: int) -> np.ndarray:
     return np.concatenate(passes)[:count]
 
 
-def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[ErosionPairs, ErosionPairs, Normalizer]:
-    """Training and validation pairs for ``cfg``, with a normalizer fitted on the training runs."""
-    root = resolve_root(cfg.data_profile, data_root)
-    datasets = []
-    for split in ("train", "val"):
-        params, _ = load_params(root / split)
-        datasets.append((root / split, select_runs(params, **dict(cfg.runs))))
-    (train_path, train_runs), (val_path, val_runs) = datasets
-    normalizer = Normalizer.fit(train_path, scale=cfg.scale, runs=train_runs)
-    train = ErosionPairs(train_path, normalizer, runs=train_runs, lags=cfg.lags)
-    val = ErosionPairs(val_path, normalizer, runs=val_runs, lags=cfg.lags)
-    return train, val, normalizer
+def make_datasets(cfg: Config, data_root: Path | None = None
+                  ) -> tuple[ErosionPairs, ErosionPairs, Scaling, float]:
+    """Training and validation pairs for ``cfg``, the ``Scaling`` fitted on the training runs, and
+    ``sigma_data``, the RMS of the training target.
+
+    World levels use ``ErosionCoarse`` or ``ErosionCrops`` (``cfg.level``); the coarse level's change
+    scaling and ``sigma_data`` are measured on block means, as it sees them.
+    """
+    train_data, val_data = (Split.open(cfg.data_profile, split, data_root) for split in ("train", "val"))
+    train_runs, val_runs = (data.select(**dict(cfg.runs)) for data in (train_data, val_data))
+    block = cfg.block if cfg.level == "coarse" else 1
+    snapshots, params, times = train_data.snapshots, train_data.params, train_data.times
+    scaling = Scaling.fit(snapshots, params, train_runs, times, block=block)
+    sigma_data = change_rms(snapshots, params, train_runs, times, scaling.change, block=block)
+    if cfg.level == "coarse":
+        make = partial(ErosionCoarse, block=cfg.block, crop=cfg.coarse_crop, margin=cfg.margin, seed=cfg.seed)
+    elif cfg.level == "fine":
+        make = partial(ErosionCrops, crop=cfg.crop, block=cfg.block, margin=cfg.margin, seed=cfg.seed)
+    else:
+        make = ErosionPairs
+    extra = {"repeats": cfg.repeats} if cfg.level else {}
+    train = make(train_data, scaling, runs=train_runs, lags=cfg.lags, **extra)
+    val = make(val_data, scaling, runs=val_runs, lags=cfg.lags)
+    return train, val, scaling, sigma_data
 
 
-def build_model(cfg: Config, normalizer: Normalizer) -> UNet | Denoiser:
+def build_model(cfg: Config, sigma_data: float = 1.0) -> UNet | Denoiser:
     """The U-Net for regression, or the U-Net inside an EDM denoiser for diffusion."""
-    unet = dict(channels=cfg.channels, blocks=cfg.blocks, emb_dim=cfg.emb_dim, attention=cfg.attention)
+    unet = dict(channels=cfg.channels, blocks=cfg.blocks, emb_dim=cfg.emb_dim, attention=cfg.attention,
+                fixed_edges=cfg.fixed_edges, in_channels=cfg.in_channels)
     if cfg.objective == "diffusion":
-        return Denoiser(len(COND_NAMES), sigma_data=normalizer.sigma_data, **unet)
-    return UNet(len(COND_NAMES), **unet)
+        return Denoiser(len(PARAMETER_NAMES), sigma_data=sigma_data, **unet)
+    return UNet(len(PARAMETER_NAMES), **unet)
+
+
+@torch.no_grad()
+def update_ema(ema: torch.nn.Module, model: torch.nn.Module, decay: float) -> None:
+    """Move each weight of ``ema`` a fraction ``1 - decay`` of the way toward ``model``'s. Buffers are copied."""
+    for e, p in zip(ema.parameters(), model.parameters()):
+        e.lerp_(p, 1 - decay)
+    for e, b in zip(ema.buffers(), model.buffers()):
+        e.copy_(b)
 
 
 def _lr_factor(step: int, cfg: Config) -> float:
@@ -113,6 +139,10 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
           **overrides) -> dict:
     """Train a model for ``cfg`` and save the checkpoint with the best validation loss.
 
+    With ``cfg.ema_decay`` set, a second copy of the model keeps an exponential moving average (EMA) of
+    the training weights. Validation, early stopping, and the saved ``"model"`` use the EMA copy; the last
+    checkpoint also keeps the training weights, as ``"train_model"``, for resuming.
+
     At every evaluation, the latest state (with the optimizer) is also saved to ``<objective>-<profile>-last.pt``.
     Stops early after ``cfg.patience`` evaluations without a better validation loss.
     With ``resume=True``, continues from ``<objective>-<profile>-last.pt``: model, optimizer, learning-rate
@@ -131,7 +161,7 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    train_data, val_data, normalizer = make_datasets(cfg, data_root)
+    train_data, val_data, scaling, sigma_data = make_datasets(cfg, data_root)
     rng = np.random.default_rng(cfg.seed)
     if cfg.max_train_samples is not None:
         train_data = Subset(train_data, rng.choice(len(train_data), cfg.max_train_samples, replace=False))
@@ -141,7 +171,8 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
 
     loader_args = dict(batch_size=cfg.batch_size, num_workers=cfg.num_workers, pin_memory=use_cuda,
                        persistent_workers=cfg.num_workers > 0)
-    model = build_model(cfg, normalizer).to(device)
+    model = build_model(cfg, sigma_data).to(device)
+    ema = copy.deepcopy(model).requires_grad_(False) if cfg.ema_decay is not None else None
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay, fused=use_cuda)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: _lr_factor(step, cfg))
     out = Path(out) if out is not None else checkpoint_path(cfg.profile, cfg.objective)
@@ -157,7 +188,9 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
         changed = {k for k, v in asdict(cfg).items() if saved_cfg[k] != v} - _RESUMABLE_CHANGES
         if changed:
             raise ValueError(f"config differs from {last.name} in {sorted(changed)}; cannot resume")
-        model.load_state_dict(saved["model"])
+        model.load_state_dict(saved["train_model"] if ema is not None else saved["model"])
+        if ema is not None:
+            ema.load_state_dict(saved["model"])
         opt.load_state_dict(saved["optimizer"])
         sched.load_state_dict(saved["scheduler"])
         history, done = saved["history"], saved["step"]
@@ -169,6 +202,7 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
     train_loader = DataLoader(train_data, sampler=_OrderSampler(order), drop_last=True, **loader_args)
     val_loader = DataLoader(val_subset, shuffle=False, **loader_args)
     step_model = torch.compile(model) if cfg.compile and use_cuda else model
+    eval_model = ema if ema is not None else step_model
 
     print(f"{cfg.profile}: {count_parameters(model):,} parameters, {len(train_data):,} training pairs, "
           f"{len(val_subset):,} validation pairs, device {device}", flush=True)
@@ -184,6 +218,8 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
         loss.backward()
         opt.step()
         sched.step()
+        if ema is not None:
+            update_ema(ema, model, cfg.ema_decay)
         running += loss.item()
         seen += 1
 
@@ -196,19 +232,22 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
                   f"{rate:,.0f} samples/s", flush=True)
             running, seen = 0.0, 0
         if step % cfg.eval_every == 0 or step == cfg.steps:
-            result = evaluate_loss(step_model, val_loader, device, bf16, cfg.objective, cfg.seed)
+            result = evaluate_loss(eval_model, val_loader, device, bf16, cfg.objective, cfg.seed)
             history["eval_step"].append(step)
             history["val_loss"].append(result["val_loss"])
             history["val_skill"].append(result["val_skill"])
             saved = result["val_loss"] < best
-            state = {"model": model.state_dict(), "config": asdict(cfg), "normalizer": normalizer.to_dict(),
-                     "step": step, "history": history}
+            state = {"model": (ema if ema is not None else model).state_dict(), "config": asdict(cfg), "scaling": asdict(scaling),
+                     "sigma_data": sigma_data, "step": step, "history": history}
             if saved:
                 best, since_best = result["val_loss"], 0
                 torch.save(state, out)
             else:
                 since_best += 1
-            torch.save({**state, "optimizer": opt.state_dict(), "scheduler": sched.state_dict()}, last)
+            resume_state = {"optimizer": opt.state_dict(), "scheduler": sched.state_dict()}
+            if ema is not None:
+                resume_state["train_model"] = model.state_dict()
+            torch.save({**state, **resume_state}, last)
             print(f"  validation loss {result['val_loss']:.4f}  skill vs no change {result['val_skill']:.3f}"
                   f"{'  (saved best)' if saved else ''}", flush=True)
             if cfg.patience is not None and since_best >= cfg.patience:
@@ -236,18 +275,14 @@ def plot_history(history: dict) -> None:
     plt.show()
 
 
-def load_checkpoint(path: Path, device: str | None = None) -> tuple[UNet, Normalizer, Config, dict]:
-    """Return (model in eval mode, normalizer, config, full checkpoint) from a saved checkpoint.
-
-    Checkpoints saved before ``Config.objective`` existed load as regression, the field's default.
-    """
+def load_checkpoint(path: Path, device: str | None = None) -> tuple[UNet, Scaling, Config, dict]:
+    """Return (model in eval mode, scaling, config, full checkpoint) from a saved checkpoint."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(path, map_location=device, weights_only=False)
     cfg = Config(**ckpt["config"])
-    norm = ckpt["normalizer"]
-    normalizer = Normalizer(**{**norm, "cond_low": tuple(norm["cond_low"]), "cond_high": tuple(norm["cond_high"])})
-    model = build_model(cfg, normalizer).to(device)
+    scaling = Scaling.from_dict(ckpt["scaling"])
+    model = build_model(cfg, ckpt["sigma_data"]).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
-    return model, normalizer, cfg, ckpt
+    return model, scaling, cfg, ckpt
 

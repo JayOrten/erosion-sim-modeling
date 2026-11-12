@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 
 
 OBJECTIVES = ("regression", "diffusion")
+LEVELS = (None, "coarse", "fine")
 
 
 @dataclass(frozen=True)
@@ -18,7 +19,22 @@ class Config:
     runs: tuple[tuple[str, tuple[float, float]], ...] = ()
     # Elapsed times to train on, in snapshot steps (1 = 1,000 yr in the full dataset). None uses all.
     lags: tuple[int, ...] | None = None
-    scale: str = "fitted"  # target scaling; see data.Normalizer
+    # Edge cells change by zero, as in the simulator. False for world models, whose window edges are not
+    # boundaries.
+    fixed_edges: bool = True
+    # World level (docs/plans/infinite-plan.md, step 5). None trains on whole runs (ErosionPairs).
+    # "coarse": whole runs as block x block means (world.data.ErosionCoarse). "fine": crop x crop pieces
+    # with the true coarse change as a second input channel (world.data.ErosionCrops).
+    level: str | None = None
+    crop: int = 64
+    block: int = 4
+    # Coarse level only: crop the block means to this many coarse cells per side. None uses whole runs.
+    coarse_crop: int | None = None
+    # World levels: keep crops this many fine cells away from the run's edge, where the simulator holds
+    # heights fixed and drains water (infinite-plan step 9a).
+    margin: int = 0
+    # World levels: training items per (run, start, end) pair, each its own crop and flip.
+    repeats: int = 1
     max_train_samples: int | None = None  # train on only this many fixed pairs (for the overfit test)
     # Model
     channels: tuple[int, ...] = (32, 64, 128, 256)
@@ -32,6 +48,10 @@ class Config:
     steps: int = 20_000
     epochs: float | None = None  # if set, replaces steps: this many passes over the training pairs
     warmup_steps: int = 500
+    # Exponential moving average of the weights, used for validation and saved as the model. Each step
+    # moves the average 1 - ema_decay of the way to the training weights, so it covers about
+    # 1 / (1 - ema_decay) steps. None turns it off.
+    ema_decay: float | None = 0.999
     # Validation
     eval_every: int = 1_000
     val_samples: int = 2_048  # fixed validation pairs, drawn once
@@ -46,6 +66,15 @@ class Config:
     def __post_init__(self):
         if self.objective not in OBJECTIVES:
             raise ValueError(f"objective must be one of {OBJECTIVES}, got {self.objective!r}")
+        if self.level not in LEVELS:
+            raise ValueError(f"level must be one of {LEVELS}, got {self.level!r}")
+        if self.margin % self.block:
+            raise ValueError("margin must be a multiple of block")
+
+    @property
+    def in_channels(self) -> int:
+        """Input channels besides the noisy target: the start heightmap, plus the coarse change at the fine level."""
+        return 2 if self.level == "fine" else 1
 
 
 PROFILES = {
@@ -58,6 +87,7 @@ PROFILES = {
         batch_size=4,
         steps=6,
         warmup_steps=2,
+        ema_decay=0.5,
         eval_every=3,
         val_samples=8,
         log_every=2,
@@ -74,6 +104,7 @@ PROFILES = {
         weight_decay=0.0,
         steps=2_000,
         warmup_steps=50,
+        ema_decay=0.99,
         eval_every=500,
         val_samples=256,
         num_workers=2,
@@ -96,6 +127,27 @@ PROFILES = {
         epochs=1.0,
         patience=10,
         batch_size=64,
+    ),
+    # The two levels of the infinite world (docs/plans/infinite-plan.md, step 5), trained as diffusion
+    # models. Every elapsed time, no uplift, and free edges. Short budgets: the
+    # first goal is output that is sensible, not good.
+    "world_coarse": Config(
+        profile="world_coarse",
+        data_profile="world",
+        runs=(("U", (0.0, 0.0)),),
+        fixed_edges=False,
+        level="coarse",
+        batch_size=64,
+        steps=20_000,
+    ),
+    "world_fine": Config(
+        profile="world_fine",
+        data_profile="world",
+        runs=(("U", (0.0, 0.0)),),
+        fixed_edges=False,
+        level="fine",
+        batch_size=64,
+        steps=20_000,
     ),
 }
 

@@ -1,6 +1,6 @@
 # Simulator timing (step 1)
 
-Measured with `datagen/scripts/time_simulator.py`. Grid 128×128, cell size 1 m, `dt = 100` yr, terrain
+Measured with `datagen/scripts/time_simulator.py`, since removed (last present at commit `c701975`). Grid 128×128, cell size 1 m, `dt = 100` yr, terrain
 `64 * fbm(seed=0)`, `K = 1e-3`, `D = 1e-3`, `m = 0.4`, `n = 1`, no uplift, one process.
 
 ## Where the time goes

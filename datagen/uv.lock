@@ -275,6 +275,7 @@ name = "erosion-datagen"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "erosion-terrain" },
     { name = "landlab" },
     { name = "matplotlib" },
     { name = "numpy" },
@@ -291,6 +292,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "erosion-terrain", editable = "../terrain" },
     { name = "landlab", specifier = "==2.9.*" },
     { name = "matplotlib", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26,<2" },
@@ -303,6 +305,21 @@ requires-dist = [
 dev = [
     { name = "ipykernel", specifier = ">=6.0" },
     { name = "pytest", specifier = ">=8.0" },
+]
+
+[[package]]
+name = "erosion-terrain"
+version = "0.1.0"
+source = { editable = "../terrain" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pyfastnoiselite" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pyfastnoiselite", specifier = "==0.0.7" },
 ]
 
 [[package]]
@@ -894,6 +911,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/da/a8/c5fdbeee588bb8ada9458774f43adf1bdd30bd59157055142183e769a024/pycparser-3.11.tar.gz", hash = "sha256:d875f09c3507d00e1aba0eecc6dcadc1352f30fff09dc6bff2f1c2935e97c2bc", size = 113796, upload-time = "2026-10-09T12:56:59.539Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/90/11/0e6f11117525ff0eec40ebac3d313376f102df93ca44ad9e893ee85e4f89/pycparser-3.11-py3-none-any.whl", hash = "sha256:51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80", size = 51178, upload-time = "2026-10-09T12:56:58.131Z" },
+]
+
+[[package]]
+name = "pyfastnoiselite"
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/d6/05385525e1872fff0314bfcb7e9540805f4fee8d7a5af14676e740b7030e/pyfastnoiselite-0.0.7-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:e99cf82a7f9d91ad49c9a345542277239891419edb49c20adbac13f3508b0121", size = 105803, upload-time = "2025-12-07T11:40:20.597Z" },
+    { url = "https://files.pythonhosted.org/packages/03/ef/dec4899fa7f6a407f80b35c0d86551c9601d38964f963b51755362898c0a/pyfastnoiselite-0.0.7-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:75ecb603323c208ef6b29d12a309d51e93ee0b98c56aee9eb58405ac9d91b8d3", size = 98309, upload-time = "2025-12-07T11:40:21.973Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/d4/4378ac3baec4c8c8cb259f3e8d72bd3ada553fe37bda12e6c6726bec5251/pyfastnoiselite-0.0.7-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:334436c854f7c26d340bc6431f51026e6f1a26f156a132dcf1a87819f9b91aba", size = 602995, upload-time = "2025-12-07T11:40:23.247Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/42/f86aede00d3d940bcff30f200c62de248732c87c6aa64b700d85b0890f42/pyfastnoiselite-0.0.7-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3c77ba93e79993fe0e69f3928a7ab54e18474c30783417d9a6f5223e238ccd65", size = 612047, upload-time = "2025-12-07T11:40:24.866Z" },
+    { url = "https://files.pythonhosted.org/packages/98/3f/06e7c64dbac2e54ebe6a87a3de47ffbe1d78b53f106b4ce734638ce461e2/pyfastnoiselite-0.0.7-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:8ec4733b391a07a46b9c0d24719dc77b14ecc4296fcb9da9c6cc133a1cf01a58", size = 1551286, upload-time = "2025-12-07T11:40:26.691Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/50/d8f1402d0d790ac2bce8cf50ad7c670592f3889d57f6b85f03592f0f492a/pyfastnoiselite-0.0.7-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:a4a2f156bcb6940ec44fa10e55e0a1155bc9bb6f53ea5550583b220799509b57", size = 1614551, upload-time = "2025-12-07T11:40:28.55Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/6a/b00c5d26681108b75922742baf6577b7a8d81a86db22987c8ae78aacbc19/pyfastnoiselite-0.0.7-cp310-cp310-win_amd64.whl", hash = "sha256:c15e86814356fc536ea1efcce93f5f1d78a7eb55c5b43edcb6784f72dddeeac5", size = 96904, upload-time = "2025-12-07T11:40:30.147Z" },
 ]
 
 [[package]]

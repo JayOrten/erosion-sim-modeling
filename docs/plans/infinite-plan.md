@@ -1,6 +1,7 @@
 # Plan: infinite eroded terrain with InfiniteDiffusion and a two-level hierarchy
 
-Status: draft. No steps started.
+Status: draft. Steps 1 to 8 done, both levels trained (20,000 steps). Step 10 built
+(`notebooks/world/world.ipynb`, `world/evaluate.py`), plus a browser viewer (`world/viewer.py`). Step 9 next: one master dataset (9a), then window sizes (9b) and experiments as run filters (9c).
 
 ## Goal
 
@@ -45,7 +46,7 @@ The world pipeline uses two unrelated kinds of noise. Keep them apart.
   per window from a key. A different noise field gives a different sample.
   - The key leaves out `dT`, so every elapsed time starts from the same noise. Only the `dT`
     conditioning changes between them, and the terrain changes smoothly over time instead of
-    jumping. Direct mode in `generate.batched_rollout` already does this, with key `(seed, 0)`.
+    jumping. Direct mode in `predict.batched_rollout` already does this, with key `(seed, 0)`.
   - The world keeps this: its noise depends on (seed, level, y, x), never on `dT` (step 2).
 
 ### Windows and resolutions
@@ -131,7 +132,7 @@ with unit standard deviation. Our `σ_data` is 1.06, so start near σ = 5.
   - Coarse window: about 4 periods.
   - Longer elapsed times spread influence farther, so they may need more context. Deferred.
 - **Two levels, both EDM diffusion models with the existing U-Net.** First pass, with a world period of
-  32 cells, so the existing 128² runs can train both levels:
+  32 cells, so 128² runs can train both levels:
   - Coarse: 4 m cells. Predicts the coarse `Δz` from the coarse `z_a`. Windows of 32 coarse cells
     (128 m, 4 periods), stride 16.
   - Fine: 1 m cells. Predicts the fine `Δz` from the fine `z_a` and the coarse `Δz`, upsampled and
@@ -141,8 +142,9 @@ with unit standard deviation. Our `σ_data` is 1.06, so start near σ = 5.
 - **T = 2 at both levels**, split at about σ = 5. See "Why T = 2".
 - **Parameters and `dT` are the same everywhere in a world** and are given to both levels.
 - **Diffusion noise is shared across `dT`**, as in the current direct mode.
-- **Data: existing 128² runs first.** Step 9 generates large-domain data only once the machinery works.
-  Scaling up comes later.
+- **Data: 128² runs first**, the `world` profile: the size of the `full` dataset, with FastNoiseLite
+  terrain and the period fixed at 32 cells. Step 9 then generates one master dataset of large runs
+  with varied terrain and periods. Scaling up comes later.
 - **Deferred:**
   - base level and outlets (where water leaves an infinite world);
   - how much context drainage needs;
@@ -156,23 +158,31 @@ with unit standard deviation. Our `σ_data` is 1.06, so start near σ = 5.
 
 ### 1. Starting terrain at any coordinate
 
-Make the Perlin fBm starting terrain a function of (seed, y, x), so any region can be computed alone.
+Add a function to `world/` that returns the starting terrain for any region, from FastNoiseLite with
+the same settings as the training data.
 
-Why: the world's input terrain has to exist everywhere. Perlin noise is defined at every coordinate,
-but `datagen/src/erosion_datagen/terrain.py` does not compute it that way. Two things tie it to one
-array:
+Why: the world's input terrain has to exist everywhere, and match what the models were trained on.
 
-- Perlin noise places a random direction at each point of a square grid and interpolates between
-  them. `perlin` draws those directions for the whole array at once from one random generator. A
-  different array size or position draws different directions. Standard Perlin noise (Perlin 2002)
-  gets each direction from a hash of the grid point instead. Use that.
-- `fbm` rescales each array to [0, 1] by its own min and max. Drop the rescale and use a fixed
-  amplitude, chosen so terrain heights match the training data (about 64 m of relief).
+Done:
 
-The coarse input is the 4×4 block mean of the fine input.
+- The hand-written Perlin generator kept an array-wide state that tied the terrain to one array:
+  - it drew each lattice point's gradient direction in order from one random stream;
+  - it rescaled each array to [0, 1] by its own min and max.
+- The terrain now comes from `erosion_terrain.fbm` (`terrain/`), using FastNoiseLite (`pyfastnoiselite`). FastNoiseLite
+  computes each gradient from a hash of the seed and the lattice point, and sums the octaves with a
+  fixed scale, so any region can be computed on its own. Heights are `64 m × fBm`. A 128² window at
+  period 32 then spans about 68 m.
+- `terrain/` is its own small package, installed by both environments (datagen needs Python 3.10,
+  the main package 3.12), so there is one copy of the terrain code.
+- The `world` data profile (128² runs, period fixed at 32 cells) was generated with it.
+- `world/terrain.py`: `Terrain`, the world's starting terrain with fixed settings, at fine cells and as
+  4×4 block means at coarse cells. A test checks it against snapshot 0 of `world` dataset runs, which
+  is the raw starting terrain.
+- Limit: FastNoiseLite works in 32-bit floats. Coordinates up to about 10⁵ cells give smooth noise.
+  At 10⁶ it starts to wobble, and at 10⁷ it breaks into steps.
 
-Check-in: a test that two overlapping queries agree. A render of a large region next to training
-terrain.
+Check-in: the test against the dataset, a test that two overlapping queries agree, and a render of a
+large region next to training terrain.
 
 ### 2. Diffusion noise at any coordinate
 
@@ -195,7 +205,7 @@ Check-in: a test that two overlapping queries agree.
 Change how terrain is scaled into and out of the model, so the scale no longer depends on the window.
 
 What the normalizer is: the network works on numbers of a similar size, not on meters. `Normalizer`
-in `data.py`, with `ErosionPairs` and `generate.predict_batch`, converts to and from model units, in
+in `data.py`, with `ErosionPairs` and `predict.predict_batch`, converts to and from model units, in
 training and in generation:
 
 - Input: `(z_a - min) / relief`, using the window's own min and relief.
@@ -210,7 +220,7 @@ Averaging them mixes two different scales.
 
 Change:
 
-- Input: `(z_a - window mean) / H`, where `H` is fixed (64 m, the dataset's starting relief).
+- Input: `(z_a - window mean) / H`, where `H` is fixed (64 m, the terrain's height scale in `datagen`).
   Subtracting each window's own mean is fine, since raising or lowering the whole terrain does not
   change `Δz`. Only the scale must be shared.
 - Target: `Δz / (H · target_scale)`. `target_scale` already depends only on parameters and `dT`, which
@@ -226,7 +236,7 @@ Check-in: tests pass. Existing checkpoints evaluate the same as before.
 
 ### 4. Training datasets for the two levels
 
-Build one dataset per level from the existing 128² runs.
+Build one dataset per level from the `world` 128² runs.
 
 - `ErosionCrops`, fine level: random 64² crops of the runs, every elapsed time, random flips and 90°
   rotations. A second input channel holds the run's true coarse `Δz` (4×4 block mean of `z_b - z_a`),
@@ -239,9 +249,9 @@ Build one dataset per level from the existing 128² runs.
     the coarse model supplies it instead. Its errors are not covered yet (see Deferred).
 - `ErosionCoarse`, coarse level: whole runs averaged to 32², with flips and rotations.
 - Both use the scaling from step 3.
-- Both use only runs whose terrain period is near the world's: 48 cells or less keeps 1,560 of the
-  8,000 training runs (`select_runs(params, period=(32, 48))`). See Decisions for why the period
-  matters.
+- Every `world` run has the world's period, 32 cells. See Decisions for why the period matters.
+- Only runs without uplift (`U = 0`), about a third of `world`, as for the single-window models. The
+  uplift runs stay in the dataset for later.
 
 Check-in: plots of a few items from each. The fine target, block-averaged, matches the coarse target.
 
@@ -249,9 +259,13 @@ Check-in: plots of a few items from each. The fine target, block-averaged, match
 
 Add profiles for the two world models and train them.
 
-- Profiles `world_coarse` and `world_fine`, used through `get_config(profile, "diffusion")`.
+- Profiles `world_coarse` and `world_fine`, used through `get_config(profile, "diffusion")`. `Config`
+  gained `level` (`"coarse"` or `"fine"`, which picks the dataset from step 4), `crop`, and `block`.
 - The fine denoiser takes 3 input channels: start terrain, upsampled coarse `Δz`, and noisy `Δz`.
-- Short step budgets. The models only need to produce sensible output.
+  `Denoiser` and `UNet` take the number of input channels.
+- Short step budgets: 20,000 steps at batch 64, about 0.4 passes over the 3.4 million items.
+  The models only need to produce sensible output.
+- Status: code and smoke tests done. Not trained yet.
 
 Check-in: samples from each level on its own, next to the simulator.
 
@@ -266,11 +280,14 @@ Run one level over a region larger than a window with `infinite-tensor`, using t
 - Phase 2: an `InfiniteTensor` that reads the blended phase 1 result and runs the rest of the schedule
   to 0. It returns the result times the tent, plus the tent.
 - Query a finite region of phase 2 and divide by the weights.
-- This needs a Heun sampler that can start and stop at given noise levels. `diffusion.sample` runs the
-  whole schedule, so it gains start and stop arguments.
+- This needs a Heun sampler that can start and stop at given noise levels. `diffusion.heun` runs any
+  piece of the schedule, and `diffusion.phase_sigmas` cuts the schedule at the splits.
+- Done in `world/level.py`: `Level`, for either level. `Level.change(y0, x0, h, w)` gives `Δz` in m.
 
-Check-in: a region one window in size, aligned to the window, equals a plain sample. A 512² fine-only
-region (coarse channel set to zero) shows whether seams are visible with T = 1 and with T = 2.
+Check-in: each window's own output equals a plain sample on the same inputs and noise. (A region
+aligned to one window still overlaps its half-stride neighbors, so the region itself does not.) A
+region several windows wide shows whether seams are visible with T = 1 and with T = 2. The first run
+used the coarse level, since it needs no coarse channel.
 
 ### 7. Two levels
 
@@ -279,6 +296,9 @@ Chain the two levels.
 - The two coarse phases, then the two fine phases. Each fine window reads the coarse phase 2 result
   over its footprint through `args`, and upsamples it to fine cells.
 - Both levels read the starting terrain from step 1: the coarse level its block means.
+- Done: `world.level.coarse_context`, passed to the fine `Level` as `context`. Every fine phase reads
+  the coarse change through it, rather than through `infinite-tensor` `args`, since every phase needs
+  it. The coarse level caches its own windows, so each is still computed once.
 
 Check-in: a 1024² region rendered next to its coarse result and its starting terrain.
 
@@ -288,27 +308,90 @@ Wrap the pipeline so a user only gives a seed, parameters, `dT`, and a region.
 
 - `World(seed, params, dT, coarse_model, fine_model).get(y0, x0, h, w)` returns eroded heights in m.
 - It builds the four `InfiniteTensor` stages once and slices the last one.
+- Done in `world/world.py`. `World(seed, dT, coarse, fine, K, D, m, persistence)` takes loaded
+  checkpoints; `World.load(seed, dT, ...)` reads them from `artifacts/checkpoints/`. Also `change`,
+  `coarse_change`, `terrain`, and `clear_cache`.
 
 Check-in, as tests:
 
 - Querying regions in different orders gives identical results.
 - Clearing the cache partway through changes nothing.
 - A small query equals the same crop of a larger query.
-- Coordinates far from the origin (around 10⁶) work.
+- Coordinates far from the origin (around 10⁵) work. See the limit in step 1.
 
-### 9. Large-domain data, if needed
+Results agree to float rounding, not bit for bit: overlapping windows are summed in whatever order
+they were computed. Clearing the cache and repeating the same queries gives identical results.
 
-Generate simulator runs on large domains, so the coarse level sees well beyond a fine window. Do this
-only once steps 1 to 8 work on the existing data.
+### 9. One master dataset closer to the world
 
-- World period of 128 cells. The coarse window then covers 512 m, so domains must be larger than that
-  for crops away from the edge: 1024² domains with the period fixed near 128 cells, and about 11
-  snapshots. About 46 MB per run. Time not yet measured; the full 128² dataset takes about 10 minutes
-  on 32 cores.
-- Coarse model: 128² crops at 4 m (512 m). Fine model: 256² crops at 1 m. Both away from the domain
-  edge.
+Generate one large dataset, `world_master`, that covers three changes at once: interior crops of large
+runs (no fixed edges), a wider period (32 to 64 cells), and varied terrain. Every run stores its settings, so each
+experiment is a training profile that picks runs by them (`Config.runs`, `data.select_runs`), not a new
+dataset. Training profiles and window sizes come after the data exists.
 
-Check-in: the step 8 renders, before and after.
+Every version is graded on the same benchmark of large simulator runs, never trained on, scored on their
+interior away from the fixed edges (`datagen/scripts/world_benchmark.py`, `world/compare.py`,
+`notebooks/world/compare.ipynb`). The current benchmark `v1` is 16 cases of 512², period 32, Perlin fBm.
+The master dataset's terrain needs a second benchmark with its kinds and periods.
+
+#### 9a. The data
+
+- **Domains of 512² cells.** Windows can then be cropped well away from the simulator's fixed edges,
+  which keep their height and drain all the water. The world has no such edges. Step 10 measured what
+  the closed 128² runs taught the models: neighboring coarse windows disagree by about 4.2 m before
+  blending, against the coarse model's 1.2 m error.
+- **How far edges reach.** Measured with `edge_error` on the 512² reference run: chunked 128² runs
+  against one large run, by distance from the nearest chunk edge. The difference is largest in the first
+  ~4 cells (15 m at 30,000 yr), then stays at 3 to 4 m across the whole chunk instead of falling to zero,
+  since a fixed edge reroutes whole drainage basins. So no margin is fully edge-free; a wider one is
+  better.
+- **Period 32 to 64 cells**, log-uniform. Covers the tested period 32 and hills twice as wide. Period
+  128 would need 1024² domains (a 512 m coarse window plus a margin) and windows four times wider on a
+  side; it waits until the 32 to 64 results show whether scale matters.
+- **Varied terrain**, all from FastNoiseLite through `erosion_terrain.fractal_noise`, so the world
+  makes the same terrain at any coordinate:
+  - noise type: Perlin, OpenSimplex2, cubic value noise;
+  - fractal type: fBm, or ridged (sharp ridges, wide valleys);
+  - octaves 4 to 7, persistence 0.35 to 0.65, lacunarity 1.8 to 2.4;
+  - domain warp (coordinates bent by two more noise fields) on half the runs, strength 0.1 to 0.5;
+  - height 32 to 128 m per unit of noise, log-uniform, around the fixed normalization height of 64 m.
+
+  Each noise and fractal type is rescaled to Perlin fBm's feature size and spread
+  (`erosion_terrain.CALIBRATION`), so period and height mean the same for every kind and the kind only
+  changes the shape. Uncalibrated, feature sizes differed by up to 2.6 times at the same period.
+- **No uplift, a snapshot every 5,000 yr** (11 snapshots), to fit on disk.
+- **Size and cost.** 2,000 train, 200 val, 200 test runs. 11.5 MB per run, 28 GB in all. About 3
+  hours with 16 workers. Measured throughput on this machine (8 performance and 16 efficiency cores):
+  workers share memory bandwidth, so 16 workers are only about 6 times faster than one, and more than
+  16 are slower. 512² runs reach 27 M cell-steps per second, 1024² runs 21 M at 12 workers. Cost
+  follows the total number of cells, not how they are split into runs.
+- **The models are not told the terrain settings.** They see only the terrain. The world takes them
+  as world parameters (`world.Terrain`).
+
+Run it with `notebooks/world/data.ipynb`, `PROFILE = "world_master"`.
+
+#### 9b. Window sizes and training profiles
+
+To decide once the data exists. The level sizes follow the largest period ("Decisions"), so period 64
+needs larger windows than now: a coarse window of 256 m (64² at 4 m) and a fine window of about 128 m,
+or a third level. Model size and speed need checking at those sizes.
+
+Training items already support interior crops: `Config.margin` keeps crops away from the run's edge,
+`Config.coarse_crop` crops the coarse level instead of using whole runs, and `Config.repeats` gives each
+(run, start, end) pair several crops.
+
+#### 9c. Experiments as run filters
+
+Each a pair of training profiles on `world_master`, compared side by side in `compare.ipynb`:
+
+- **Edges only:** period near 32, Perlin fBm, no warp, at the current window sizes. Against the current
+  models, this isolates closed runs against interior crops.
+- **Wider period:** all periods, Perlin fBm.
+- **Variety:** every run.
+- **Generalization:** every run except one kind (for example ridged), tested on that kind.
+
+A wider input distribution needs more steps. Watch validation loss for when it stops improving, rather
+than fixing the step count in advance.
 
 ### 10. Basic evaluation
 

@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>World Viewer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #f4f3ef; --panel: rgba(255, 255, 255, 0.94); --text: #1d1d1b; --muted: #6b6a66;
+    --line: #d9d7d0; --accent: #2f6f8f; --input: #ffffff; --warn: #9a5b00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151614; --panel: rgba(28, 29, 27, 0.94); --text: #e8e6df; --muted: #9b9a94;
+      --line: #3a3b37; --accent: #79b4cf; --input: #232421; --warn: #e0a64a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151614; --panel: rgba(28, 29, 27, 0.94); --text: #e8e6df; --muted: #9b9a94;
+    --line: #3a3b37; --accent: #79b4cf; --input: #232421; --warn: #e0a64a;
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #map { position: absolute; inset: 0; background: var(--bg); }
+  .leaflet-container { background: var(--bg); }
+  .leaflet-tile { image-rendering: pixelated; }
+  .panel { position: absolute; z-index: 1000; top: 12px; left: 12px; width: 252px; max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 90px); overflow: auto; box-sizing: border-box;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15); }
+  .panel h1 { font-size: 14px; margin: 0 0 2px; font-weight: 600; }
+  .panel p { margin: 0 0 10px; color: var(--muted); }
+  .layers { display: flex; gap: 4px; margin-bottom: 10px; }
+  .layers button { flex: 1; padding: 5px 0; border: 1px solid var(--line); background: var(--input); color: var(--text);
+    border-radius: 5px; cursor: pointer; font: inherit; }
+  .layers button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  label { display: grid; grid-template-columns: 82px 1fr; align-items: center; gap: 8px; margin: 5px 0; }
+  label span { color: var(--muted); }
+  input { width: 100%; box-sizing: border-box; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--input); color: var(--text); font: inherit; font-variant-numeric: tabular-nums; }
+  .apply { width: 100%; margin-top: 8px; padding: 6px; border: 0; border-radius: 5px; background: var(--accent);
+    color: var(--bg); font: inherit; font-weight: 600; cursor: pointer; }
+  .status { position: absolute; z-index: 1000; bottom: 22px; left: 12px; right: 120px; max-width: 640px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+    font-variant-numeric: tabular-nums; }
+  .status div + div { margin-top: 2px; color: var(--muted); }
+  .busy { color: var(--accent); }
+  .warn { color: var(--warn); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h1>Infinite eroded world</h1>
+  <p>Drag to pan, scroll to zoom. The starting terrain shows at once; erosion fills in on top, nearest the
+    center first.</p>
+  <div class="layers" id="layers"></div>
+  <label><span>seed</span><input id="seed" type="number" step="1"></label>
+  <label><span>dT (yr)</span><input id="dT" type="number" step="1000" min="1000" max="50000"></label>
+  <label><span>K_ref</span><input id="K_ref" type="number" step="0.00005" min="0.0001" max="0.0005"></label>
+  <label><span>D / K</span><input id="D_over_K" type="number" step="0.1" min="0.3" max="3"></label>
+  <label><span>m</span><input id="m" type="number" step="0.01" min="0.3" max="0.6"></label>
+  <label><span>persistence</span><input id="persistence" type="number" step="0.05" min="0.35" max="0.65"></label>
+  <button class="apply" id="apply">Apply</button>
+  <div class="hint">Trained ranges: dT 1,000–50,000 yr, K_ref 1e-4–5e-4, D/K 0.3–3, m 0.3–0.6,
+    persistence 0.35–0.65. New settings start a new world; earlier ones stay cached.</div>
+</div>
+<div class="status"><div id="status"></div><div id="server"></div></div>
+<script>
+const LABELS = { eroded: "Eroded", start: "Start", change: "Δz" };
+const NAMES = ["seed", "dT", "K_ref", "D_over_K", "m", "persistence"];
+let config, map, layer = "eroded", settings, cursor = null, server = null;
+let base = null, overlay = null;  // not `top`: browsers reserve window.top
+
+// A tile queue: at most `limit` requests at once, nearest the view center first. Tiles that leave the
+// view are dropped from the queue, and cancelled if already sent (the server then skips them).
+class TileQueue {
+  constructor(limit) { this.limit = limit; this.waiting = []; this.running = new Set(); }
+  add(job) { this.waiting.push(job); this.pump(); }
+  cancel(job) {
+    if (!job || job.finished) return;
+    job.finished = true;
+    this.waiting = this.waiting.filter(j => j !== job);
+    if (job.controller) job.controller.abort();
+    this.running.delete(job);
+    this.pump();
+  }
+  clear() { for (const job of [...this.waiting, ...this.running]) this.cancel(job); }
+  priority(job) {
+    const zoom = map.getZoom(), center = map.project(map.getCenter(), job.coords.z).divideBy(256);
+    const away = Math.hypot(job.coords.x + 0.5 - center.x, job.coords.y + 0.5 - center.y);
+    return away + (job.coords.z === Math.min(zoom, config.max_native_zoom) ? 0 : 1000);
+  }
+  pump() {
+    this.waiting.sort((a, b) => this.priority(a) - this.priority(b));
+    while (this.running.size < this.limit && this.waiting.length) {
+      const job = this.waiting.shift();
+      this.running.add(job);
+      job.controller = new AbortController();
+      fetch(job.url, { signal: job.controller.signal })
+        .then(r => r.ok ? r.blob() : r.text().then(t => { throw new Error(t); }))
+        .then(blob => {
+          job.img.onload = () => URL.revokeObjectURL(job.img.src);
+          job.img.src = URL.createObjectURL(blob);
+          if (!job.finished) { job.finished = true; job.done(null, job.img); }
+        })
+        .catch(error => { if (!job.finished) { job.finished = true; job.done(error, job.img); } })
+        .finally(() => { this.running.delete(job); this.pump(); updateStatus(); });
+    }
+    updateStatus();
+  }
+  get count() { return this.waiting.length + this.running.size; }
+}
+// Browsers open at most 6 connections to one server: 3 for terrain, 2 for erosion, 1 for the status.
+const fast = new TileQueue(3), slow = new TileQueue(2);
+
+const QueuedLayer = L.GridLayer.extend({
+  createTile(coords, done) {
+    const img = document.createElement("img");
+    img.alt = "";
+    const job = { coords, img, done, url: this.options.urlFor(coords), finished: false };
+    img._job = job;
+    this.options.queue.add(job);
+    return img;
+  },
+});
+
+function tileUrl(name, coords) {
+  const query = NAMES.map(n => `${n}=${encodeURIComponent(settings[n])}`).join("&");
+  return `/tile/${name}/${coords.z}/${coords.x}/${coords.y}.png?${query}`;
+}
+
+function makeLayer(name, queue, minZoom, zIndex) {
+  const l = new QueuedLayer({
+    tileSize: 256, minZoom, maxNativeZoom: config.max_native_zoom, maxZoom: 4, noWrap: true,
+    keepBuffer: 0, updateWhenZooming: false, zIndex, queue, urlFor: coords => tileUrl(name, coords),
+  });
+  l.on("tileunload", e => queue.cancel(e.tile._job));
+  return l;
+}
+
+function rebuild() {
+  if (base) map.removeLayer(base);
+  if (overlay) map.removeLayer(overlay);
+  fast.clear(); slow.clear();
+  base = makeLayer("start", fast, config.min_zoom, 1).addTo(map);
+  overlay = layer === "start" ? null : makeLayer(layer, slow, config.min_model_zoom, 2).addTo(map);
+  updateStatus();
+}
+
+function updateStatus() {
+  if (!map) return;
+  const zoom = Math.min(map.getZoom(), config.max_native_zoom), pixel = 2 ** -zoom;
+  const where = cursor ? `x ${cursor.x.toFixed(0)} m, y ${cursor.y.toFixed(0)} m · ` : "";
+  let level;
+  if (layer === "start") level = "starting terrain";
+  else if (zoom < config.min_model_zoom) level = `<span class="warn">zoom in to ${2 ** -config.min_model_zoom} m/px or closer to see erosion</span>`;
+  else level = pixel < config.block ? "fine level" : "coarse level";
+  const pending = slow.count;
+  const busy = pending ? ` · <span class="busy">${pending} eroded tile${pending > 1 ? "s" : ""} to compute</span>` : "";
+  document.getElementById("status").innerHTML = `${where}${pixel} m/px · ${level}${busy}`;
+  let line = `${config.steps} sampler steps`;
+  if (server) {
+    const each = server.seconds_per_tile;
+    line += ` · server: ${server.done} tiles done`;
+    if (each) line += `, ${each.toFixed(1)} s each`;
+    if (each && pending) line += `, about ${Math.ceil(each * pending)} s for the ones queued`;
+    if (server.computing) line += ` · now: ${server.computing}`;
+  }
+  document.getElementById("server").innerHTML = line;
+}
+
+async function pollServer() {
+  try { server = await (await fetch("/status", { cache: "no-store" })).json(); } catch { server = null; }
+  updateStatus();
+  setTimeout(pollServer, 1000);
+}
+
+async function start() {
+  config = await (await fetch("/config")).json();
+  settings = { ...config.defaults };
+  for (const n of NAMES) document.getElementById(n).value = settings[n];
+
+  map = L.map("map", {
+    crs: L.CRS.Simple, minZoom: config.min_zoom, maxZoom: 4, zoomSnap: 1, attributionControl: false,
+  }).setView([-256, 256], -1);
+  L.control.scale({ imperial: false, position: "bottomright" }).addTo(map);
+  map.on("moveend zoomend", () => { fast.pump(); slow.pump(); });
+
+  const box = document.getElementById("layers");
+  for (const name of config.layers) {
+    const b = document.createElement("button");
+    b.textContent = LABELS[name];
+    b.className = name === layer ? "on" : "";
+    b.onclick = () => {
+      layer = name;
+      for (const other of box.children) other.className = other === b ? "on" : "";
+      rebuild();
+    };
+    box.appendChild(b);
+  }
+  document.getElementById("apply").onclick = () => {
+    for (const n of NAMES) settings[n] = Number(document.getElementById(n).value);
+    rebuild();
+  };
+  map.on("mousemove", e => { cursor = { x: e.latlng.lng, y: -e.latlng.lat }; updateStatus(); });
+  map.on("zoomend", updateStatus);
+  rebuild();
+  pollServer();
+}
+
+start();
+</script>
+</body>
+</html>

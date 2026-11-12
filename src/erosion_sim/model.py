@@ -11,7 +11,8 @@ def zero_edges(t: torch.Tensor) -> torch.Tensor:
     """``t`` (..., H, W) with its outer ring of cells set to zero.
 
     The simulator holds its edge cells at a fixed height, so their change is always zero. Every model
-    output and the diffusion noise go through this one function.
+    output and the diffusion noise go through this one function, unless the model was built with
+    ``fixed_edges=False`` (world models, whose window edges are not boundaries).
     """
     interior = torch.zeros_like(t)
     interior[..., 1:-1, 1:-1] = 1
@@ -76,7 +77,8 @@ class UNet(nn.Module):
 
     - ``x``: (batch, in_channels, H, W). H and W must be divisible by ``2 ** (len(channels) - 1)``.
     - ``cond``: (batch, cond_dim), each value about in [0, 1].
-    - Output: (batch, 1, H, W). Edge nodes are set to zero, since the simulator holds edges fixed.
+    - Output: (batch, 1, H, W). With ``fixed_edges``, edge nodes are set to zero, since the simulator
+      holds edges fixed.
 
     The output layer starts at zero, so an untrained model predicts no change.
     """
@@ -90,8 +92,10 @@ class UNet(nn.Module):
         frequencies: int = 16,
         attention: bool = True,
         in_channels: int = 1,
+        fixed_edges: bool = True,
     ):
         super().__init__()
+        self.fixed_edges = fixed_edges
         self.levels = len(channels)
         self.features = SinusoidalFeatures(frequencies)
         self.embed = nn.Sequential(
@@ -153,7 +157,8 @@ class UNet(nn.Module):
             if level > 0:
                 h = self.upsample[i](F.interpolate(h, scale_factor=2, mode="nearest"))
 
-        return zero_edges(self.out(F.silu(self.out_norm(h))))
+        out = self.out(F.silu(self.out_norm(h)))
+        return zero_edges(out) if self.fixed_edges else out
 
 
 def count_parameters(model: nn.Module) -> int:

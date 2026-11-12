@@ -11,9 +11,11 @@ requires-python = ">=3.12"
 dependencies = [
     "matplotlib>=3.11.2",
     "numpy>=2.5.4",
+    "erosion-terrain",
     "pyvista>=0.49.1",
     "torch>=2.14.1",
     "tqdm>=4.70.1",
+    "infinite-tensor==0.4.0",
 ]
 
 [dependency-groups]
@@ -22,8 +24,14 @@ dev = [
     "pytest>=8.0",
 ]
 
+[tool.uv.sources]
+erosion-terrain = { path = "terrain", editable = true }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"erosion_sim.world" = ["viewer.html"]

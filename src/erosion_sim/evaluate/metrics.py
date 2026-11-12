@@ -2,6 +2,7 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import NullFormatter, ScalarFormatter
 
 from ..hydrology import drainage_area, pits
 from .pairs import FACTORS, model_methods, per_pair_skill
@@ -133,8 +134,10 @@ def spectrum_comparison(pairs: dict, show: bool = True) -> dict:
             ax2.semilogx(result["wavelength"], result[name] / result["simulator"], color=f"C{i}", label=name)
         ax2.axhline(1, color="k", lw=0.8)
         for ax in (ax1, ax2):
-            ax.set_xlabel("wavelength (cells)")
+            ax.set_xlabel("wavelength (cells); fine detail to the right")
             ax.invert_xaxis()
+            ax.xaxis.set_major_formatter(ScalarFormatter())
+            ax.xaxis.set_minor_formatter(NullFormatter())
             ax.legend(fontsize=8)
         ax1.set_ylabel("power of the change")
         ax2.set_ylabel("power / simulator's power")

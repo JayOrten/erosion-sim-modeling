@@ -93,11 +93,11 @@ rather than importing across repositories.
 
 - **Environment.** Use `uv`. Install with `uv sync`; run with `uv run`. Commit `uv.lock`.
 - **Layout.** Source in `src/<package>/`, installed editably via setuptools. Tests in `tests/`.
-  Notebooks in `notebooks/<line of work>/` (`chunk/`, `world/`). Plans in `docs/plans/`, measurements
+  Notebooks in `notebooks/<line of work>/` (`datagen/`, `chunk/`, `world/`). Plans in `docs/plans/`, measurements
   and findings in `docs/notes/`. `README.md` lists every module.
 - **Modules.** Split by role: `config.py`, `train.py`, `predict.py`, `evaluate/`, plus `world/` for the
-  infinite world. File locations go through `paths.py`. Scaling to and from model units goes through
-  `data.Normalizer`. Do not repeat either elsewhere.
+  infinite world. File locations go through `paths.py`. Conversion to and from model units goes through
+  `normalization.py`. Do not repeat either elsewhere.
 - **Configs.** A frozen dataclass `Config` plus a `PROFILES` dict. Always include a tiny `smoke`
   profile that runs in seconds on CPU, then larger ones.
 - **Simulators.** Write custom simulators in Numba when existing packages do not fit. Record why an

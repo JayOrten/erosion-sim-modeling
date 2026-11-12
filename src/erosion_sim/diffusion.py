@@ -15,26 +15,32 @@ from torch import nn
 
 from .model import UNet, zero_edges
 
-# Noise levels below are multiples of sigma_data. EDM's defaults assume images with sigma_data = 0.5,
-# so each is rescaled from that.
-# Sampler range. EDM: 0.002 to 80.
+# EDM's settings, from Karras et al. 2022 (arXiv:2206.00364), Table 1, "Ours" column. EDM tuned them
+# for images with sigma_data = 0.5. Here noise levels are multiples of sigma_data, so each EDM noise level
+# is divided by 0.5 (multiplied by 2).
+# Sampler noise range. EDM: sigma_min = 0.002, sigma_max = 80.
 SIGMA_MIN = 0.004
 SIGMA_MAX = 160.0
-# Training draws ln(sigma) from a normal distribution. EDM: mean -1.2, standard deviation 1.2.
+# Training draws ln(sigma) from a normal distribution. EDM: P_mean = -1.2, P_std = 1.2. Adding ln 2 to the
+# mean is the same rescaling by 2.
 P_MEAN = -1.2 + math.log(2)
 P_STD = 1.2
-# Validation uses fixed noise levels: the 1/16, 3/16, ..., 15/16 quantiles of the training distribution,
-# so their average loss tracks the training loss.
-VAL_SIGMAS = tuple(math.exp(NormalDist(P_MEAN, P_STD).inv_cdf((i + 0.5) / 8)) for i in range(8))
-# Sampler time steps: EDM's spacing exponent, and a default step count.
+# Sampler time step spacing. EDM: rho = 7.
 RHO = 7.0
+# Our choices, not from EDM:
+# - Default sampler steps. EDM's deterministic sampler used 18 steps on CIFAR-10 and 40 on
+#   FFHQ and AFHQv2; 32 is a starting point (docs/plans/diffusion-plan.md).
 DEFAULT_STEPS = 32
+# - Validation uses fixed noise levels, the 1/16, 3/16, ..., 15/16 quantiles of the training
+#   distribution, so their average loss tracks the training loss without random noise levels.
+VAL_SIGMAS = tuple(math.exp(NormalDist(P_MEAN, P_STD).inv_cdf((i + 0.5) / 8)) for i in range(8))
 
 
 class Denoiser(nn.Module):
     """Estimate the clean normalized change from a noisy one, with EDM preconditioning.
 
-    The U-Net sees two channels, the start heightmap ``x`` and the scaled noisy target, and one extra
+    The U-Net sees the channels of ``x`` (the start heightmap, plus any context channels) and the scaled
+    noisy target, and one extra
     conditioning scalar for the noise level. Its output is mixed with the noisy input:
 
         D(noisy, sigma) = c_skip * noisy + c_out * F(c_in * noisy, c_noise)
@@ -42,17 +48,24 @@ class Denoiser(nn.Module):
     The constants keep the U-Net's input and target near unit variance at every noise level. At small
     ``sigma`` the result is mostly ``noisy``; at large ``sigma`` it is mostly the U-Net's output.
 
-    - ``x``: (batch, 1, H, W) start heightmap, as in ``ErosionPairs``.
+    - ``x``: (batch, in_channels, H, W) start heightmap, as in ``ErosionPairs``, plus any context channels
+      (the fine world level adds the coarse change).
     - ``cond``: (batch, cond_dim) normalized conditioning scalars.
     - ``noisy``: (batch, 1, H, W) noisy normalized change.
     - ``sigma``: (batch,) noise level of each sample.
-    - Output: (batch, 1, H, W). Edge nodes are zero, since the simulator holds edges fixed.
+    - Output: (batch, 1, H, W). With ``fixed_edges``, edge nodes are zero, since the simulator holds
+      edges fixed.
     """
 
-    def __init__(self, cond_dim: int, sigma_data: float = 1.0, **unet_kwargs):
+    def __init__(self, cond_dim: int, sigma_data: float = 1.0, fixed_edges: bool = True, in_channels: int = 1,
+                 **unet_kwargs):
         super().__init__()
         self.sigma_data = float(sigma_data)
-        self.net = UNet(cond_dim + 1, in_channels=2, **unet_kwargs)
+        self.fixed_edges = fixed_edges
+        self.net = UNet(cond_dim + 1, in_channels=in_channels + 1, fixed_edges=fixed_edges, **unet_kwargs)
+
+    def edges(self, t: torch.Tensor) -> torch.Tensor:
+        return zero_edges(t) if self.fixed_edges else t
 
     def noise_feature(self, sigma: torch.Tensor) -> torch.Tensor:
         """EDM's ``c_noise = ln(sigma) / 4``, mapped so the sampler's range becomes [0, 1]."""
@@ -60,7 +73,7 @@ class Denoiser(nn.Module):
         return (torch.log(sigma / self.sigma_data) - low) / (high - low)
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor, noisy: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
-        noisy = zero_edges(noisy)
+        noisy = self.edges(noisy)
         s = sigma.reshape(-1, 1, 1, 1).to(noisy.dtype)
         sd = self.sigma_data
         c_skip = sd**2 / (s**2 + sd**2)
@@ -68,7 +81,7 @@ class Denoiser(nn.Module):
         c_in = 1 / (s**2 + sd**2).sqrt()
         net_cond = torch.cat([cond, self.noise_feature(sigma.to(cond.dtype))[:, None]], dim=1)
         out = self.net(torch.cat([x, c_in * noisy], dim=1), net_cond)
-        return zero_edges(c_skip * noisy + c_out * out)
+        return self.edges(c_skip * noisy + c_out * out)
 
 
 def loss_weight(sigma: torch.Tensor, sigma_data: float) -> torch.Tensor:
@@ -107,13 +120,15 @@ def noise_seed(*key) -> int:
     return int.from_bytes(hashlib.sha256(payload).digest()[:8], "little")
 
 
-def initial_noise(keys: list[tuple], shape: tuple[int, int]) -> torch.Tensor:
-    """Unit Gaussian noise of ``shape`` for each key, shape (len(keys), 1, H, W), with zero edges.
+def initial_noise(keys: list[tuple], shape: tuple[int, int], fixed_edges: bool = True) -> torch.Tensor:
+    """Unit Gaussian noise of ``shape`` for each key, shape (len(keys), 1, H, W), with zero edges if
+    ``fixed_edges``.
 
     Drawn on the CPU, so a key gives the same noise on any device.
     """
-    return zero_edges(torch.stack([torch.randn(1, *shape, generator=torch.Generator().manual_seed(noise_seed(*k)))
-                                   for k in keys]))
+    noise = torch.stack([torch.randn(1, *shape, generator=torch.Generator().manual_seed(noise_seed(*k)))
+                         for k in keys])
+    return zero_edges(noise) if fixed_edges else noise
 
 
 def sigma_steps(steps: int, sigma_data: float) -> torch.Tensor:
@@ -126,23 +141,41 @@ def sigma_steps(steps: int, sigma_data: float) -> torch.Tensor:
     return torch.cat([sigmas, torch.zeros(1, dtype=torch.float64)])
 
 
-@torch.no_grad()
-def sample(denoiser: Denoiser, x: torch.Tensor, cond: torch.Tensor, noise: torch.Tensor,
-           steps: int = DEFAULT_STEPS) -> torch.Tensor:
-    """Turn unit noise into a normalized change with EDM's deterministic Heun sampler.
+def phase_sigmas(steps: int, sigma_data: float, splits: tuple[float, ...] = ()) -> list[torch.Tensor]:
+    """The sampler schedule cut into phases at the noise levels ``splits`` (multiples of ``sigma_data``).
 
-    The sampler solves the probability-flow ODE (ordinary differential equation) from high noise to
-    zero. Each step takes an Euler step, then corrects it with the slope at the new point (Heun's
-    method), except the last. That is ``2 * steps - 1`` denoiser calls. The result depends only on
-    ``noise``, so the same noise always gives the same sample.
+    InfiniteDiffusion blends overlapping windows between phases (docs/plans/infinite-plan.md, "Why
+    T = 2"). Each phase starts at the noise level the one before ends at, so running them one after the
+    other is exactly one full run. A split falls on the first schedule level at or below it. With no
+    splits there is one phase, the whole schedule.
+    """
+    sigmas = sigma_steps(steps, sigma_data)
+    cuts = [0]
+    for split in sorted(splits, reverse=True):
+        cut = int(torch.nonzero(sigmas <= split * sigma_data)[0])
+        if cut > cuts[-1]:
+            cuts.append(cut)
+    cuts.append(len(sigmas) - 1)
+    return [sigmas[a:b + 1] for a, b in zip(cuts[:-1], cuts[1:])]
+
+
+@torch.no_grad()
+def heun(denoiser: Denoiser, x: torch.Tensor, cond: torch.Tensor, y: torch.Tensor,
+         sigmas: torch.Tensor) -> torch.Tensor:
+    """Run EDM's deterministic Heun sampler on ``y``, which is at noise level ``sigmas[0]``, down to
+    ``sigmas[-1]``.
+
+    The sampler solves the probability-flow ODE (ordinary differential equation) toward zero noise.
+    Each step takes an Euler step, then corrects it with the slope at the new point (Heun's method),
+    except a step to zero. A step depends only on ``y`` and its two noise levels, so a schedule split
+    into pieces (``phase_sigmas``) gives the same result as running it whole.
 
     - ``x``, ``cond``: as in ``Denoiser``.
-    - ``noise``: (batch, 1, H, W) unit noise, for example from ``initial_noise``.
-    - Output: (batch, 1, H, W) normalized change.
+    - ``y``: (batch, 1, H, W) noisy normalized change at ``sigmas[0]``.
+    - Output: (batch, 1, H, W), at ``sigmas[-1]``; the clean change if that is 0.
     """
-    sigmas = sigma_steps(steps, denoiser.sigma_data).tolist()
-    noise = noise.to(device=x.device, dtype=torch.float32)
-    y = noise * sigmas[0]
+    sigmas = sigmas.tolist()
+    y = y.to(device=x.device, dtype=torch.float32)
     ones = torch.ones(len(y), device=x.device)
 
     def slope(y, s):
@@ -155,3 +188,19 @@ def sample(denoiser: Denoiser, x: torch.Tensor, cond: torch.Tensor, noise: torch
             y_next = y + (s_next - s) * 0.5 * (d + slope(y_next, s_next))
         y = y_next
     return y
+
+
+@torch.no_grad()
+def sample(denoiser: Denoiser, x: torch.Tensor, cond: torch.Tensor, noise: torch.Tensor,
+           steps: int = DEFAULT_STEPS) -> torch.Tensor:
+    """Turn unit noise into a normalized change: ``heun`` over the whole schedule of ``steps`` levels.
+
+    That is ``2 * steps - 1`` denoiser calls. The result depends only on ``noise``, so the same noise
+    always gives the same sample.
+
+    - ``x``, ``cond``: as in ``Denoiser``.
+    - ``noise``: (batch, 1, H, W) unit noise, for example from ``initial_noise``.
+    - Output: (batch, 1, H, W) normalized change.
+    """
+    sigmas = sigma_steps(steps, denoiser.sigma_data)
+    return heun(denoiser, x, cond, noise.to(device=x.device, dtype=torch.float32) * sigmas[0].item(), sigmas)

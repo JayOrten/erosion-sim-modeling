@@ -46,3 +46,10 @@ def test_gradients_reach_every_parameter():
     model(torch.rand(2, 1, 16, 16), torch.rand(2, COND)).pow(2).mean().backward()
     missing = [name for name, p in model.named_parameters() if p.grad is None or p.grad.abs().sum() == 0]
     assert missing == []
+
+
+def test_free_edges():
+    model = small_model(fixed_edges=False)
+    torch.nn.init.normal_(model.out.weight)
+    y = model(torch.rand(3, 1, 16, 16), torch.rand(3, COND))
+    assert y[..., 0, :].abs().sum() > 0 and y[..., :, -1].abs().sum() > 0
