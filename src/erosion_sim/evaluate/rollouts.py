@@ -5,8 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ..data import load_params, select_runs
-from ..paths import data_root as resolve_root
+from ..data import Split
 from ..predict import batched_rollout, default_lag, predict_batch
 from ..train import load_checkpoint
 
@@ -29,13 +28,11 @@ def rollout_error(checkpoint: Path, split: str = "val", runs: int = 64, lag: int
 
     Returns RMSE (m) and skill for each, per elapsed time.
     """
-    model, normalizer, cfg, _ = load_checkpoint(checkpoint)
+    model, scaling, cfg, _ = load_checkpoint(checkpoint)
     lag = default_lag(cfg) if lag is None else lag
-    root = resolve_root(cfg.data_profile, data_root)
-    params, _ = load_params(root / split)
-    snapshots = np.load(root / split / "snapshots.npy", mmap_mode="r")
-    times = params["times"]
-    matching = select_runs(params, **dict(cfg.runs))
+    data = Split.open(cfg.data_profile, split, data_root)
+    params, snapshots, times = data.params, data.snapshots, data.times
+    matching = data.select(**dict(cfg.runs))
     chosen = np.random.default_rng(seed).choice(matching, min(runs, len(matching)), replace=False)
     picks = np.arange(0, len(times), lag)
     dT = float(times[lag] - times[0])
@@ -50,11 +47,11 @@ def rollout_error(checkpoint: Path, split: str = "val", runs: int = 64, lag: int
     sq = {"no change": sq_error(sim[:, :1])}
     # One call per frame, from the simulator's previous snapshot. All frames of all runs go in together.
     keys = [(seed, "one call", int(run), k, 0) for run in chosen for k in range(1, steps + 1)]
-    sq["one call"] = sq_error(predict_batch(model, normalizer, sim[:, :-1].reshape(-1, *sim.shape[2:]), params,
+    sq["one call"] = sq_error(predict_batch(model, scaling, sim[:, :-1].reshape(-1, *sim.shape[2:]), params,
                                             np.repeat(chosen, steps), dT, keys).reshape(sim[:, 1:].shape))
-    sq["rollout"] = sq_error(batched_rollout(model, normalizer, sim[:, 0], params, chosen, dT, steps, seed=seed)[:, 1:])
+    sq["rollout"] = sq_error(batched_rollout(model, scaling, sim[:, 0], params, chosen, dT, steps, seed=seed)[:, 1:])
     if "direct" in names:
-        sq["direct"] = sq_error(batched_rollout(model, normalizer, sim[:, 0], params, chosen, dT, steps, "direct",
+        sq["direct"] = sq_error(batched_rollout(model, scaling, sim[:, 0], params, chosen, dT, steps, "direct",
                                                 seed=seed)[:, 1:])
     elapsed = times[picks[1:]] - times[0]
     result = {"elapsed": elapsed}

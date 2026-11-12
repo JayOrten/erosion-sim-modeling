@@ -12,13 +12,16 @@ import multiprocessing
 import time
 import warnings
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
 with warnings.catch_warnings():
-    warnings.simplefilter("ignore", UserWarning)  # richdem imports the deprecated pkg_resources
+    warnings.simplefilter(
+        "ignore", UserWarning
+    )  # richdem imports the deprecated pkg_resources
     import richdem
-from erosion_terrain import SEED_LIMIT, fbm
+from erosion_terrain import SEED_LIMIT, TERRAIN_FIELDS, Terrain
 from landlab import RasterModelGrid
 from landlab.components import FastscapeEroder, FlowAccumulator, LinearDiffuser
 from landlab.utils.suppress_output import suppress_output
@@ -29,9 +32,13 @@ from .config import ARTIFACTS_DIR, Config
 PARAMS = ("K_ref", "D", "m", "U", "period", "persistence")
 
 
-def keyed_rng(cfg: Config, split: str, role: str, index: int | None = None) -> np.random.Generator:
+def keyed_rng(
+    cfg: Config, split: str, role: str, index: int | None = None
+) -> np.random.Generator:
     """Derive an independent, stable random stream from a canonical JSON record."""
-    payload = json.dumps(["erosion-datagen-v1", cfg.profile, split, role, index], separators=(",", ":")).encode()
+    payload = json.dumps(
+        ["erosion-datagen-v1", cfg.profile, split, role, index], separators=(",", ":")
+    ).encode()
     key = int.from_bytes(hashlib.sha256(payload).digest()[:8], "little")
     return np.random.Generator(np.random.PCG64(key))
 
@@ -47,24 +54,33 @@ def _log_uniform(u: np.ndarray, low: float, high: float) -> np.ndarray:
 
 
 def sample_params(cfg: Config, split: str) -> dict[str, np.ndarray]:
-    """Draw every run's parameters for one split with Latin Hypercube Sampling."""
+    """Draw every run's parameters for one split: one array per erosion parameter and per terrain field.
+
+    The erosion parameters, ``period``, and ``persistence`` come from Latin Hypercube Sampling; the other
+    terrain fields from ``terrain_kind``; the seed from its own stream per run.
+    """
     n = cfg.runs(split)
     u = latin_hypercube(keyed_rng(cfg, split, "params"), n, len(PARAMS))
     K_ref = _log_uniform(u[:, 0], *cfg.K_ref)
     m = cfg.m[0] + u[:, 2] * (cfg.m[1] - cfg.m[0])
     # The uplift column picks no uplift for its lowest U_zero_fraction, then spreads the rest over U_over_K.
     uplifted = u[:, 3] >= cfg.U_zero_fraction
-    u_rest = (u[:, 3] - cfg.U_zero_fraction) / (1 - cfg.U_zero_fraction)
+    u_rest = (u[:, 3] - cfg.U_zero_fraction) / max(1 - cfg.U_zero_fraction, 1e-12)
     return {
         "K": erodibility(cfg, K_ref, m),
         "K_ref": K_ref,
         "D": K_ref * _log_uniform(u[:, 1], *cfg.D_over_K),
         "m": m,
-        "U": np.where(uplifted, K_ref * _log_uniform(np.clip(u_rest, 0, 1), *cfg.U_over_K), 0.0),
+        "U": np.where(
+            uplifted, K_ref * _log_uniform(np.clip(u_rest, 0, 1), *cfg.U_over_K), 0.0
+        ),
         "period": _log_uniform(u[:, 4], *cfg.period),
-        "persistence": cfg.persistence[0] + u[:, 5] * (cfg.persistence[1] - cfg.persistence[0]),
-        "terrain_seed": np.array([keyed_rng(cfg, split, "terrain", i).integers(SEED_LIMIT) for i in range(n)]),
-    }
+        "persistence": cfg.persistence[0]
+        + u[:, 5] * (cfg.persistence[1] - cfg.persistence[0]),
+        "seed": np.array(
+            [keyed_rng(cfg, split, "terrain", i).integers(SEED_LIMIT) for i in range(n)]
+        ),
+    } | terrain_kind(cfg, split, n)
 
 
 def erodibility(cfg: Config, K_ref, m):
@@ -72,15 +88,36 @@ def erodibility(cfg: Config, K_ref, m):
     return K_ref * cfg.A_ref ** (cfg.m_ref - m)
 
 
-def starting_terrain(cfg: Config, terrain_seed: int, period: float, persistence: float) -> np.ndarray:
-    return cfg.height * fbm(
-        cfg.shape,
-        seed=int(terrain_seed),
-        period=period,
-        octaves=cfg.octaves,
-        persistence=persistence,
-        lacunarity=cfg.lacunarity,
-    )
+def terrain_kind(cfg: Config, split: str, n: int) -> dict[str, np.ndarray]:
+    """Each run's noise type, fractal type, octaves, lacunarity, warp, and height (m per unit of noise).
+
+    Settings the profile does not vary come out as its fixed values. Noise and fractal types are names,
+    as ``Terrain`` takes them. Drawn from their own random stream.
+    """
+    rng = keyed_rng(cfg, split, "terrain-kind")
+    out = {
+        "noise": np.array(cfg.noise_types)[rng.integers(len(cfg.noise_types), size=n)],
+        "fractal": np.array(cfg.fractal_types)[rng.integers(len(cfg.fractal_types), size=n)],
+        "octaves": (
+            rng.integers(cfg.octave_range[0], cfg.octave_range[1] + 1, size=n)
+            if cfg.octave_range
+            else np.full(n, cfg.octaves)
+        ),
+        "lacunarity": rng.uniform(*cfg.lacunarity_range, size=n)
+        if cfg.lacunarity_range
+        else np.full(n, cfg.lacunarity),
+        "height": _log_uniform(rng.uniform(size=n), *cfg.height_range)
+        if cfg.height_range
+        else np.full(n, cfg.height),
+    }
+    warped = rng.uniform(size=n) < cfg.warp_fraction
+    out["warp"] = np.where(warped, rng.uniform(*cfg.warp, size=n), 0.0)
+    return out
+
+
+def run_terrain(p: dict) -> Terrain:
+    """The ``Terrain`` of one run, from its entry of ``sample_params`` (a dict of scalars)."""
+    return Terrain(**{name: np.asarray(p[name]).item() for name in TERRAIN_FIELDS})
 
 
 def fill_pits(z: np.ndarray) -> np.ndarray:
@@ -101,7 +138,9 @@ def drainage_area(z: np.ndarray, cell_size: float = 1.0) -> np.ndarray:
     grid = RasterModelGrid(z.shape, xy_spacing=cell_size)
     grid.add_field("topographic__elevation", z.ravel().astype(np.float64), at="node")
     grid.add_field("filled__elevation", fill_pits(z).ravel(), at="node")
-    FlowAccumulator(grid, surface="filled__elevation", flow_director="D8").run_one_step()
+    FlowAccumulator(
+        grid, surface="filled__elevation", flow_director="D8"
+    ).run_one_step()
     return grid.at_node["drainage_area"].reshape(z.shape)
 
 
@@ -125,7 +164,9 @@ def simulate(
     if steps % snapshot_every:
         raise ValueError("steps must be a multiple of snapshot_every")
     grid = RasterModelGrid(z0.shape, xy_spacing=cell_size)
-    z = grid.add_field("topographic__elevation", z0.ravel().astype(np.float64), at="node")
+    z = grid.add_field(
+        "topographic__elevation", z0.ravel().astype(np.float64), at="node"
+    )
     filled = grid.add_field("filled__elevation", z.copy(), at="node")
     flow = FlowAccumulator(grid, surface="filled__elevation", flow_director="D8")
     incision = FastscapeEroder(grid, K_sp=K, m_sp=m, n_sp=1.0)
@@ -146,22 +187,32 @@ def simulate(
 
 def _run_one(task: tuple[Config, int, dict]) -> tuple[int, np.ndarray]:
     cfg, index, p = task
-    z0 = starting_terrain(cfg, p["terrain_seed"], p["period"], p["persistence"])
+    z0 = run_terrain(p).heights(0, 0, *cfg.shape)
     snapshots = simulate(
-        z0, p["K"], p["D"], p["m"], p["U"],
-        dt=cfg.dt, steps=cfg.steps, snapshot_every=cfg.snapshot_every, cell_size=cfg.cell_size,
+        z0,
+        p["K"],
+        p["D"],
+        p["m"],
+        p["U"],
+        dt=cfg.dt,
+        steps=cfg.steps,
+        snapshot_every=cfg.snapshot_every,
+        cell_size=cfg.cell_size,
     )
     return index, snapshots
 
 
-def run_many(cfg: Config, params: dict[str, np.ndarray]):
+def run_many(cfg: Config, params: dict[str, np.ndarray], indices=None):
     """Simulate one run per entry of ``params`` in parallel. Yield ``(index, snapshots)`` as runs finish.
 
-    ``params`` holds equal-length arrays with the keys returned by ``sample_params``.
+    ``params`` holds equal-length arrays with the keys returned by ``sample_params``. ``indices`` limits
+    the runs to those; None runs all.
     """
-    n = len(params["K"])
-    tasks = [(cfg, i, {k: v[i] for k, v in params.items()}) for i in range(n)]
-    processes = min(cfg.processes or os.cpu_count() or 1, n)
+    indices = range(len(params["K"])) if indices is None else list(indices)
+    tasks = [(cfg, i, {k: v[i] for k, v in params.items()}) for i in indices]
+    if not tasks:
+        return
+    processes = min(cfg.processes or os.cpu_count() or 1, len(tasks))
     # Spawned workers start fresh, so they see OMP_NUM_THREADS before Landlab loads.
     with multiprocessing.get_context("spawn").Pool(processes) as pool:
         yield from pool.imap_unordered(_run_one, tasks)
@@ -171,15 +222,32 @@ def dataset_dir(cfg: Config, split: str) -> Path:
     return ARTIFACTS_DIR / "data" / cfg.profile / split
 
 
-def make_dataset(cfg: Config, split: str, out_dir: Path | None = None, progress_every: int = 0) -> Path:
+def make_dataset(
+    cfg: Config,
+    split: str,
+    out_dir: Path | None = None,
+    progress_every: int = 0,
+    progress: Callable[[int, int], None] | None = None,
+) -> Path:
     """Simulate every run of one split and write it to ``out_dir``. Return ``out_dir``.
 
     Files written:
 
     - ``snapshots.npy``: float32, shape (runs, snapshots, rows, cols). Written as a memory map, so
       readers can load it lazily with ``np.load(path, mmap_mode="r")``.
-    - ``params.npz``: one array per parameter, length ``runs``, plus ``times`` (yr) for the snapshots.
-    - ``meta.json``: the config and package versions.
+    - ``params.npz``: one array of length ``runs`` per erosion parameter (``K``, ``K_ref``, ``D``, ``m``,
+      ``U``) and per ``Terrain`` field (``seed``, ``period``, ``persistence``, ``octaves``, ``lacunarity``,
+      ``height``, ``noise``, ``fractal``, ``warp``; noise and fractal as names), plus ``times`` (yr) for
+      the snapshots.
+    - ``meta.json``: the config and package versions. Written last, so it marks a finished split.
+
+    Resumable: while it runs, ``progress.json`` holds the settings and the runs already on disk (each
+    added only after its snapshots are flushed). Called again after an interruption, with the same
+    settings, it simulates only the missing runs. Runs are a fixed function of the settings and the run
+    index, so the result is the same as an uninterrupted run. With different settings, it starts over.
+
+    ``progress(done, total)`` is called after each run is saved, and ``progress_every`` > 0 prints a line
+    every that many runs.
     """
     out_dir = Path(out_dir) if out_dir is not None else dataset_dir(cfg, split)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -187,16 +255,59 @@ def make_dataset(cfg: Config, split: str, out_dir: Path | None = None, progress_
     n = cfg.runs(split)
     snapshot_count = cfg.steps // cfg.snapshot_every + 1
     times = np.arange(snapshot_count) * cfg.snapshot_every * cfg.dt
+    shape = (n, snapshot_count, *cfg.shape)
 
-    snapshots = np.lib.format.open_memmap(
-        out_dir / "snapshots.npy", mode="w+", dtype=np.float32, shape=(n, snapshot_count, *cfg.shape)
+    path, record = out_dir / "snapshots.npy", out_dir / "progress.json"
+    settings = json.loads(
+        json.dumps({"config": vars(cfg), "split": split, "shape": shape})
     )
-    start = time.perf_counter()
-    for done, (index, result) in enumerate(run_many(cfg, params), start=1):
+    done: list[int] = []
+    if path.exists() and record.exists():
+        saved = json.loads(record.read_text())
+        if saved["settings"] == settings:
+            done = saved["done"]
+        else:
+            print(
+                f"{split}: settings differ from the interrupted run; starting over",
+                flush=True,
+            )
+    if done:
+        snapshots = np.lib.format.open_memmap(path, mode="r+")
+        print(f"{split}: resuming, {len(done)}/{n} runs already on disk", flush=True)
+    else:
+        (out_dir / "meta.json").unlink(missing_ok=True)
+        snapshots = np.lib.format.open_memmap(
+            path, mode="w+", dtype=np.float32, shape=shape
+        )
+
+    def save():
+        tmp = record.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"settings": settings, "done": done}))
+        tmp.replace(
+            record
+        )  # atomic, so an interruption never leaves a half-written record
+
+    save()
+    finished = set(done)
+    start, first = time.perf_counter(), len(done)
+    if progress:
+        progress(len(done), n)
+    for index, result in run_many(
+        cfg, params, [i for i in range(n) if i not in finished]
+    ):
         snapshots[index] = result
-        if progress_every and done % progress_every == 0:
+        snapshots.flush()
+        done.append(int(index))
+        save()
+        if progress:
+            progress(len(done), n)
+        new = len(done) - first
+        if progress_every and new % progress_every == 0:
             elapsed = time.perf_counter() - start
-            print(f"{split}: {done}/{n} runs, {elapsed:.0f} s elapsed, ~{elapsed / done * (n - done):.0f} s left", flush=True)
+            print(
+                f"{split}: {len(done)}/{n} runs, {elapsed:.0f} s elapsed, ~{elapsed / new * (n - len(done)):.0f} s left",
+                flush=True,
+            )
     snapshots.flush()
     del snapshots
 
@@ -204,10 +315,15 @@ def make_dataset(cfg: Config, split: str, out_dir: Path | None = None, progress_
     meta = {
         "config": {k: v for k, v in vars(cfg).items()},
         "split": split,
-        "versions": {"landlab": _version("landlab"), "richdem": _version("richdem"), "numpy": np.__version__},
+        "versions": {
+            "landlab": _version("landlab"),
+            "richdem": _version("richdem"),
+            "numpy": np.__version__,
+        },
         "seconds": time.perf_counter() - start,
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    record.unlink()
     return out_dir
 
 

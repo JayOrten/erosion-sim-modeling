@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import numpy as np
+import pytest
 import torch
 
 from erosion_sim.config import PROFILES, get_config
@@ -14,8 +15,9 @@ def test_smoke_training_saves_a_loadable_checkpoint(data_root, tmp_path):
     assert len(history["val_loss"]) == 2
     assert all(torch.isfinite(torch.tensor(history["train_loss"])))
 
-    model, normalizer, cfg, ckpt = load_checkpoint(out, device="cpu")
+    model, scaling, cfg, ckpt = load_checkpoint(out, device="cpu")
     assert cfg == PROFILES["smoke"]
+    assert len(scaling.parameters.low) == len(scaling.parameters.high) == 5
     x, cond = torch.rand(2, 1, 16, 16), torch.rand(2, 5)
     with torch.no_grad():
         assert model(x, cond).shape == (2, 1, 16, 16)
@@ -90,22 +92,47 @@ def test_checkpoint_without_objective_loads_as_regression(data_root, tmp_path):
     assert cfg.objective == "regression"
 
 
-def test_world_scaling_trains_and_loads(data_root, tmp_path):
+def test_free_edges_diffusion_trains_and_loads(data_root, tmp_path):
     out = tmp_path / "diffusion-smoke.pt"
-    cfg = replace(get_config("smoke", "diffusion"), height=64.0, fixed_edges=False)
+    cfg = replace(get_config("smoke", "diffusion"), fixed_edges=False)
     train(cfg, data_root=data_root, show=False, out=out)
-    model, normalizer, loaded, _ = load_checkpoint(out, device="cpu")
+    model, _, loaded, ckpt = load_checkpoint(out, device="cpu")
     assert loaded == cfg
-    assert normalizer.height == 64.0
+    assert model.sigma_data == ckpt["sigma_data"]
     assert not model.fixed_edges and not model.net.fixed_edges
 
 
-def test_old_checkpoint_loads_with_relief_scale_and_fixed_edges(data_root, tmp_path):
+@pytest.mark.parametrize("level", ["coarse", "fine"])
+def test_world_levels_train_and_load(data_root, tmp_path, level):
+    out = tmp_path / f"diffusion-smoke-{level}.pt"
+    cfg = replace(get_config("smoke", "diffusion"), fixed_edges=False, level=level, crop=8, block=2)
+    history = train(cfg, data_root=data_root, show=False, out=out)
+    assert all(torch.isfinite(torch.tensor(history["train_loss"])))
+    model, _, loaded, _ = load_checkpoint(out, device="cpu")
+    assert loaded == cfg and model.net.stem.in_channels == cfg.in_channels + 1
+    size = 8  # fine crops are 8²; coarse items are 16² runs as 2 × 2 means
+    x = torch.rand(2, cfg.in_channels, size, size)
+    with torch.no_grad():
+        assert model(x, torch.rand(2, 5), torch.randn(2, 1, size, size), torch.tensor([1.0, 2.0])).shape == (2, 1, size, size)
+
+
+def test_ema_is_saved_as_the_model_and_training_weights_kept_for_resuming(data_root, tmp_path):
     out = tmp_path / "regression-smoke.pt"
     train(PROFILES["smoke"], data_root=data_root, show=False, out=out)
-    ckpt = torch.load(out, weights_only=False)
-    del ckpt["config"]["height"], ckpt["config"]["fixed_edges"], ckpt["normalizer"]["height"]
-    torch.save(ckpt, out)
-    model, normalizer, cfg, _ = load_checkpoint(out, device="cpu")
-    assert normalizer.height is None and cfg.height is None
-    assert cfg.fixed_edges and model.fixed_edges
+    last = torch.load(tmp_path / "regression-smoke-last.pt", weights_only=False)
+    ema, trained = last["model"], last["train_model"]
+    assert ema.keys() == trained.keys()
+    assert any(not torch.equal(ema[k], trained[k]) for k in ema)
+
+    train(PROFILES["smoke"], data_root=data_root, show=False, out=out, ema_decay=None)
+    last = torch.load(tmp_path / "regression-smoke-last.pt", weights_only=False)
+    assert "train_model" not in last
+
+
+def test_update_ema_moves_a_fraction_of_the_way():
+    from erosion_sim.train import update_ema
+
+    ema, model = torch.nn.Linear(2, 2), torch.nn.Linear(2, 2)
+    before = ema.weight.clone()
+    update_ema(ema, model, decay=0.75)
+    torch.testing.assert_close(ema.weight, before + 0.25 * (model.weight - before))

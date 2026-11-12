@@ -2,14 +2,17 @@
 
 import json
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 
-from ..data import COND_NAMES, load_params
+from ..data import Split
+from ..normalization import PARAMETER_NAMES
 from ..diffusion import DEFAULT_STEPS, Denoiser, sample
-from ..paths import DATAGEN_DIR, data_root as resolve_root
+from ..paths import DATAGEN_DIR
 from ..train import load_checkpoint
 
 
@@ -25,7 +28,7 @@ def time_model(model, size: tuple[int, int] = (128, 128), batch_sizes=(1, 64), r
     out = {}
     for batch in batch_sizes:
         x = torch.rand(batch, 1, *size, device=device)
-        cond = torch.rand(batch, len(COND_NAMES), device=device)
+        cond = torch.rand(batch, len(PARAMETER_NAMES), device=device)
         if isinstance(model, Denoiser):
             noise = torch.randn(batch, 1, *size, device=device)
 
@@ -47,15 +50,18 @@ def time_model(model, size: tuple[int, int] = (128, 128), batch_sizes=(1, 64), r
     return out
 
 
-def time_simulator(profile: str, split: str, run: int, steps: int = 100, repeats: int = 3) -> dict:
-    """Time the simulator on one core for ``steps`` steps of run ``run``, in the datagen environment.
+def time_simulator(z0: np.ndarray, K: float, D: float, m: float, U: float, *, dt: float, steps: int,
+                   repeats: int = 1, cell_size: float = 1.0) -> float:
+    """Seconds for ``steps`` simulator steps on ``z0``, the best of ``repeats``, on one CPU core.
 
-    Returns datagen's JSON: ``seconds_per_step`` (best of ``repeats``) and ``dt`` (yr per step).
+    Runs ``erosion_datagen.timing`` in the datagen environment, as a separate process.
     """
-    command = ["uv", "run", "--project", str(DATAGEN_DIR), "python", str(DATAGEN_DIR / "scripts" / "time_run.py"),
-               profile, split, str(run), str(steps), str(repeats)]
-    result = subprocess.run(command, capture_output=True, text=True, check=True)
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    with tempfile.TemporaryDirectory() as tmp:
+        request = Path(tmp) / "request.npz"
+        np.savez(request, z0=z0, K=K, D=D, m=m, U=U, dt=dt, steps=steps, repeats=repeats, cell_size=cell_size)
+        command = ["uv", "run", "--project", str(DATAGEN_DIR), "python", "-m", "erosion_datagen.timing", str(request)]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+    return json.loads(result.stdout.strip().splitlines()[-1])["seconds"]
 
 
 def calls_needed(lags, total: int) -> int | None:
@@ -83,10 +89,14 @@ def speed_comparison(checkpoint: Path, split: str = "val", run: int = 0, elapsed
     """
     model, _, cfg, _ = load_checkpoint(checkpoint)
     diffusion = isinstance(model, Denoiser)
-    params, _ = load_params(resolve_root(cfg.data_profile) / split)
-    snapshot_dt = float(params["times"][1] - params["times"][0])
-    lags = cfg.lags if cfg.lags is not None else range(1, len(params["times"]))
-    sim = time_simulator(cfg.data_profile, split, run)
+    data = Split.open(cfg.data_profile, split)
+    snapshot_dt = float(data.times[1] - data.times[0])
+    lags = cfg.lags if cfg.lags is not None else range(1, len(data.times))
+    e = data.erosion(run)
+    dt, sim_steps = data.config["dt"], 100
+    sim_seconds = time_simulator(data.snapshots[run, 0], e["K"], e["D"], e["m"], e["U"], dt=dt, steps=sim_steps,
+                                 repeats=3, cell_size=data.config["cell_size"])
+    sim = {"seconds_per_step": sim_seconds / sim_steps, "dt": dt}
     repeats = 3 if diffusion else 20
     gpu = time_model(model, repeats=repeats, steps=steps) if next(model.parameters()).device.type == "cuda" else {}
     cpu_model, _, _, _ = load_checkpoint(checkpoint, device="cpu")

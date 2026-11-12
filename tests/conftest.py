@@ -2,6 +2,14 @@ import json
 
 import numpy as np
 import pytest
+import torch
+
+from erosion_sim.data import Split
+from erosion_sim.normalization import Scaling
+
+# The test models are tiny. Many CPU threads only contend with each other (and with anything else running),
+# which made the suite over 20 times slower.
+torch.set_num_threads(1)
 
 RUNS, SNAPS, SIZE = 4, 6, 16
 
@@ -20,16 +28,24 @@ def write_fake_dataset(path, seed=0):
         path / "params.npz",
         times=np.arange(SNAPS) * 1000.0,
         K=K_ref * 1.2, K_ref=K_ref, D=K_ref * np.array([0.5, 1, 2, 3]), m=np.array([0.3, 0.4, 0.5, 0.6]),
-        U=np.array([0.0, 0.0, 1e-5, 2e-5]), period=np.full(RUNS, 64.0), persistence=np.full(RUNS, 0.5),
-        terrain_seed=np.arange(RUNS),
+        U=np.array([0.0, 0.0, 1e-5, 2e-5]),
+        # Terrain fields, as datagen stores them. The fake snapshots do not follow them.
+        seed=np.arange(RUNS), period=np.full(RUNS, 64.0), persistence=np.full(RUNS, 0.5), octaves=np.full(RUNS, 5),
+        lacunarity=np.full(RUNS, 2.0), height=np.full(RUNS, 64.0), noise=np.full(RUNS, "perlin"),
+        fractal=np.full(RUNS, "fbm"), warp=np.zeros(RUNS),
     )
     (path / "meta.json").write_text(json.dumps({"config": {}, "split": path.name}))
     return path
 
 
 @pytest.fixture
-def dataset_path(tmp_path):
-    return write_fake_dataset(tmp_path / "train")
+def dataset(tmp_path):
+    return Split(write_fake_dataset(tmp_path / "train"))
+
+
+@pytest.fixture
+def scaling(dataset):
+    return Scaling.fit(dataset.snapshots, dataset.params, np.arange(len(dataset)), dataset.times)
 
 
 @pytest.fixture

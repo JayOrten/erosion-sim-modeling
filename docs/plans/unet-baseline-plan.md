@@ -32,7 +32,7 @@ Also produced along the way: one large dataset, built once (see Data).
 
 ## The simulator
 
-The simulator is the model from `datagen/notebooks/landlab-demo.ipynb`. Each step runs three Landlab
+The simulator is the model from `notebooks/datagen/landlab-demo.ipynb`. Each step runs three Landlab
 components in order:
 
 1. `FlowAccumulator` routes water downhill (D8: each node drains to its steepest of 8 neighbors) and
@@ -99,7 +99,7 @@ first: the simulator settings (step 1) and the parameters and their ranges (step
 
 The simulator uses `K = K_ref · A_ref^(0.4 − m)` with `A_ref = 30` m². This keeps the overall amount
 of erosion about the same across the `m` range, so `m` changes channel shape rather than rate.
-Ranges were checked in `datagen/notebooks/parameter-ranges.ipynb`.
+Ranges were checked in `notebooks/datagen/parameter-ranges.ipynb`.
 
 Fixed for every run: grid 128×128, cell size 1 m, `n = 1`, `octaves = 5`, `lacunarity = 2`, terrain
 height 64 m, step size `dt`, pits filled with `richdem` for routing, all edges open.

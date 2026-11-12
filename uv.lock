@@ -506,6 +506,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "erosion-terrain" },
+    { name = "infinite-tensor" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "pyvista" },
@@ -522,6 +523,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "erosion-terrain", editable = "terrain" },
+    { name = "infinite-tensor", specifier = "==0.4.0" },
     { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "numpy", specifier = ">=2.5.4" },
     { name = "pyvista", specifier = ">=0.49.1" },
@@ -641,6 +643,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz", hash = "sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44", size = 216463, upload-time = "2026-09-17T14:11:04.752Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl", hash = "sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c", size = 69583, upload-time = "2026-09-17T14:11:03.168Z" },
+]
+
+[[package]]
+name = "infinite-tensor"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4a/ee/3c3ede112d6641f3ed4ea293334ce7d8a60cbe4ea0322d7a42aef018051f/infinite_tensor-0.4.0.tar.gz", hash = "sha256:87c6019a8247097bf68a08fbcfb359e79b7bff16c2bdafc3f787264e0f4e3fb0", size = 47639, upload-time = "2026-10-23T23:42:49.616Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/10/90e8fadc1a67103e5eff8f552278cb8d4914fe5de5492b4984d3f7155537/infinite_tensor-0.4.0-py3-none-any.whl", hash = "sha256:3efeba3f54f64640e737dbeb224451f427b05a677da7dac1b66d3bb3cff819d5", size = 35109, upload-time = "2026-10-23T23:42:48.516Z" },
 ]
 
 [[package]]
