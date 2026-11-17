@@ -104,9 +104,9 @@ dimension rises from about 1.71 toward 2.
 
 **Stored output.** One 128 × 128 image per run. Each occupied cell holds its arrival step (0 for the
 seed particle). Empty cells hold −1. This is only a compact way to store the run: the cluster at any
-step `t` is every cell with arrival step below `t`. Every run is grown to 1,000 particles.
+step `t` is every cell with arrival step below `t`. Every run is grown to 600 particles.
 
-**Training pair.** A start step `t` and a count `x`, with `t + x` ≤ 1,000. Drawn at random during
+**Training pair.** A start step `t` and a count `x`, with `t + x` ≤ 600. Drawn at random during
 training, so a run gives as many pairs as needed.
 
 - Input: the occupancy at step `t` (1 occupied, 0 empty), plus `p` and `x` as conditioning.
@@ -126,25 +126,26 @@ training, so a run gives as many pairs as needed.
 
 **Splits.**
 
-| split   | runs   | `p`                                       | starts from                              |
-| ------- | ------ | ----------------------------------------- | ---------------------------------------- |
-| `train` | 20,000 | 0.05 to 1, log-uniform                    | the seed particle                        |
-| `val`   | 2,000  | 0.05 to 1, log-uniform                    | the seed particle                        |
-| `test`  | 1,000  | 0.05, 0.1, 0.2, 0.5, 1: 200 runs each     | the seed particle (`start_id` empty)     |
-| `test`  | 1,000  | 0.1 for `start_id` 0 to 9, 1 for 10 to 19 | a shared start: 20 starts × 50 runs      |
+| split   | runs    | `p`                                       | starts from                              |
+| ------- | ------- | ----------------------------------------- | ---------------------------------------- |
+| `train` | 200,000 | 0.05 to 1, log-uniform                    | the seed particle                        |
+| `val`   | 2,000   | 0.05 to 1, log-uniform                    | the seed particle                        |
+| `test`  | 1,000   | 0.05, 0.1, 0.2, 0.5, 1: 200 runs each     | the seed particle (`start_id` empty)     |
+| `test`  | 1,000   | 0.1 for `start_id` 0 to 9, 1 for 10 to 19 | a shared start: 20 starts × 50 runs      |
 
 Why the test split is built this way. DLA is random, so a model sample cannot match one simulator run
 cell for cell. The metrics compare distributions instead: many model samples against many simulator
 runs under the same conditions.
 
 - **Fixed `p` values.** Each value has 200 simulator runs to compare against.
-- **Shared starts.** For each `start_id`, one cluster is grown to 300 particles, then continued 50
-  times with different seeds to 1,000. Each run stores its whole arrival image, start cells included.
+- **Shared starts.** For each `start_id`, one cluster is grown to 200 particles, then continued 50
+  times with different seeds to 600. Each run stores its whole arrival image, start cells included.
   The model gets the same start 50 times, and its spread is compared with the simulator's.
 
-Grid size and particle count are a starting proposal. Step 1 measures cluster radius and simulator time
-and may change them. A cluster of 1,000 particles at `p` = 1 has a radius of about 60 cells. Cost:
-minutes of CPU, a few GB.
+Grid size and particle count are measured. A cluster must stay within radius 60 of the center to fit
+the 128² grid. At 1,000 particles, 11% of clusters at `p` = 1 went past that. At 600, the largest of
+10,000 clusters at `p` = 1 had radius 58. Cost: about 7 ms per run, a few CPU-minutes for the whole
+dataset. Generated locally, not on the cluster.
 
 ### DLA evaluation
 
@@ -185,8 +186,8 @@ The erosion code's U-Net and EDM sampler, on DLA images. Nothing here is built y
 
 **Training pairs**
 
-- `t` uniform over 1 to 900.
-- `x` log-uniform over 1 to `1,000 − t`.
+- `t` uniform over 1 to 540.
+- `x` log-uniform over 1 to `600 − t`.
 - One fresh (`t`, `x`) per item, so every epoch sees new pairs.
 
 **Objective and sampler**
@@ -216,7 +217,7 @@ trains fast.
 - Question: does the base recipe learn DLA well enough to build on?
 - Varies: nothing.
 - Models trained: 1.
-- Train: `dla_master` train, all 20,000.
+- Train: `dla_master` train, all 200,000.
 - Scored on: test, all 2,000.
 - Reports: every DLA metric, at each test `p` and from each shared start, beside the simulator's.
 - Decides: if clusters come out broken (disconnected, wrong count), fix the decoding or the target's scaling before
@@ -273,12 +274,12 @@ trains fast.
 
 - Question: are samples at different `x` from one start consistent with each other?
 - Varies:
-  - Containment: `x` ∈ {50, 100, 200, 350, 700} from each shared start (`t` = 300), all with the same
+  - Containment: `x` ∈ {25, 50, 100, 200, 400} from each shared start (`t` = 200), all with the same
     starting noise. Check every pair `x1 < x2`.
-  - Chaining: reach `t` = 1,000 from `t` = 300 as 1 jump of 700, 2 jumps of 350, 4 jumps of 175.
+  - Chaining: reach `t` = 600 from `t` = 200 as 1 jump of 400, 2 jumps of 200, 4 jumps of 100.
 - Model: the best of A1 to A4. No training.
 - Scored on: test, `start_id` set (1,000): 50 samples per start, against the simulator's 50
-  continuations. Containment also from 100 clusters in test, `start_id` empty, at `t` = 300.
+  continuations. Containment also from 100 clusters in test, `start_id` empty, at `t` = 200.
 - Reports: fraction of cells from the `x1` sample missing in the `x2` sample; distribution metrics of
   each chaining scheme against the simulator.
 - Claims: 6.

@@ -32,6 +32,8 @@ src/erosion_sim/
   hydrology.py           drainage area and pits
   render.py              hillshade and 3D renders
   evaluate/              metrics, chained calls, sampler sweeps, timing, and plots
+  dla/                   DLA simulator with sticking probability, datasets, training pairs (track A)
+  cli.py                 erosion-sim command: dla-generate
   world/                 infinite world (docs/plans/infinite-plan.md): World, levels, noise,
                          level datasets, evaluation, version comparison, and a browser viewer
 notebooks/

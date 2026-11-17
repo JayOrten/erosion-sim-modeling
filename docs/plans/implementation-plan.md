@@ -47,7 +47,7 @@ src/erosion_sim/
 datagen/src/erosion_datagen/
   cli.py            erosion-datagen: generate
 slurm/
-  datagen.sbatch, dla_datagen.sbatch, train.sbatch, evaluate.sbatch
+  datagen.sbatch, train.sbatch, evaluate.sbatch
 notebooks/experiments/
   A1.ipynb ... C9.ipynb, summary.ipynb
 archive/
@@ -124,11 +124,11 @@ Build the DLA simulator with a sticking probability, and generate `dla_master`.
   - Continuation: start from a stored arrival image instead of a single seed particle.
   - Seeding: SHA-256 of `{"dataset", "split", "index"}` as canonical JSON, seeding PCG64.
 - `numba` added to the main environment.
-- Measure, at `p` ∈ {0.05, 1}: cluster radius at 1,000 particles, and time per run. Confirm 128² and
-  1,000 particles, or change them.
+- Measure cluster radius and time per run. Result: 128² holds 600 particles, not 1,000.
 - `dla/data.py`: the `dla_master` splits from `experiments-plan.md`, including the 20 shared starts for
   test. Written as `arrivals.npy` plus `runs.npz` and `meta.json`.
-- `erosion-sim dla-generate <split>` runs one split. `slurm/dla_datagen.sbatch` runs all of them.
+- `erosion-sim dla-generate <profile> [split ...]`, run locally. The DLA data takes minutes, so it is
+  not generated on the cluster; it is copied there.
 - Training pairs: `DLAPairs` draws `t` and `x` per item. Input is the occupancy at `t`, conditioning is
   `log10 p` and `log10 x`, target is the occupancy at `t + x`.
 

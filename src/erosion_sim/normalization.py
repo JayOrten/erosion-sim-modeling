@@ -1,6 +1,6 @@
 """Conversions between real units (meters, years) and the numbers the model sees.
 
-There are three, kept separate:
+There are four, kept separate:
 
 1. Terrain. ``terrain_to_model`` takes the start heightmap, subtracts its mean, and divides by
    ``HEIGHT_UNIT`` (64 m). This is a fixed number, not fitted, so every sample and every window of the
@@ -13,6 +13,9 @@ There are three, kept separate:
    erodibility and elapsed time: ``coef * (K_ref * dT) ** power`` meters. Changes range from about 0.01 m
    to tens of meters; after this they are all about size 1, so small changes are not drowned out by
    large ones in training. It is the training target, and its inverse turns model output into meters.
+
+4. DLA conditioning. ``dla_conditioning`` maps the sticking probability ``p`` and the jump ``x`` (particles
+   added) to [0, 1] as logarithms, over the dataset's fixed ranges. Nothing is fitted.
 
 ``ParameterScaling`` and ``ChangeScaling`` are fitted on the training runs and saved with the model,
 together as a ``Scaling``.
@@ -42,6 +45,13 @@ def terrain_to_model(z: np.ndarray) -> np.ndarray:
     """Heightmaps ``z`` (..., H, W) in m to model input: each map minus its mean, divided by ``HEIGHT_UNIT``."""
     z = np.asarray(z, dtype=np.float64)
     return (z - z.mean(axis=(-2, -1), keepdims=True)) / HEIGHT_UNIT
+
+
+def dla_conditioning(p, x, p_range: tuple[float, float], particles: int) -> np.ndarray:
+    """DLA conditioning, shape (..., 2): ``log p`` scaled so ``p_range`` maps to [0, 1], and ``log x``
+    scaled so 1 to ``particles`` maps to [0, 1]."""
+    low, high = np.log(p_range[0]), np.log(p_range[1])
+    return np.stack([(np.log(p) - low) / (high - low), np.log(x) / np.log(particles)], axis=-1)
 
 
 def parameter_values(params: dict, runs, dT) -> np.ndarray:
