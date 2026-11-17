@@ -21,6 +21,7 @@ terrain/                 erosion_terrain: Terrain, the seeded starting terrain, 
 src/erosion_sim/
   paths.py               where datasets, checkpoints, and animations live
   config.py              training profiles
+  table.py               run tables (runs.npz): load, select runs by column
   data.py                Split (one dataset split), training pairs
   normalization.py       every conversion to and from model units: terrain (fixed 64 m unit), erosion
                          parameters (to [0, 1]), height change (divided by its typical size)

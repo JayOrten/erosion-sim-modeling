@@ -12,7 +12,7 @@ def test_rollout_and_gif(data_root, tmp_path):
     train(PROFILES["smoke"], data_root=data_root, show=False, out=ckpt)
     model, scaling, _, _ = load_checkpoint(ckpt, device="cpu")
     val = Split(data_root / "val")
-    params, z0 = val.params, np.array(val.snapshots[0, 0])
+    params, z0 = val.columns, np.array(val.snapshots[0, 0])
     for mode in ("rollout", "direct"):
         frames = rollout(model, scaling, z0, params, 0, 1000.0, 3, mode)
         assert frames.shape == (4, *z0.shape)

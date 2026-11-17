@@ -21,7 +21,7 @@ def test_crops_shapes_and_round_trip(dataset, scaling):
     assert item["x"].shape == (2, 8, 8) and item["y"].shape == (1, 8, 8)
     # The change in m comes back from the target.
     dT = dataset.times[item["end"]] - dataset.times[item["start"]]
-    dz = scaling.change.from_model(item["y"][0].double(), dataset.params["K_ref"][item["run"]], dT)
+    dz = scaling.change.from_model(item["y"][0].double(), dataset.columns["K_ref"][item["run"]], dT)
     torch.testing.assert_close(dz, (item["z_b"] - item["z_a"]).double(), atol=1e-4, rtol=0)
     # The coarse channel is the block mean of the target, repeated to 1 m cells.
     coarse = upsample(block_mean(item["y"][0].numpy(), 2), 2)

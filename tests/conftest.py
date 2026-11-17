@@ -25,8 +25,8 @@ def write_fake_dataset(path, seed=0):
     snapshots[:, :, 0, :] = snapshots[:, :1, 0, :]  # fixed edges, as in the simulator
     np.save(path / "snapshots.npy", snapshots)
     np.savez(
-        path / "params.npz",
-        times=np.arange(SNAPS) * 1000.0,
+        path / "runs.npz",
+        index=np.arange(RUNS),
         K=K_ref * 1.2, K_ref=K_ref, D=K_ref * np.array([0.5, 1, 2, 3]), m=np.array([0.3, 0.4, 0.5, 0.6]),
         U=np.array([0.0, 0.0, 1e-5, 2e-5]),
         # Terrain fields, as datagen stores them. The fake snapshots do not follow them.
@@ -34,7 +34,7 @@ def write_fake_dataset(path, seed=0):
         lacunarity=np.full(RUNS, 2.0), height=np.full(RUNS, 64.0), noise=np.full(RUNS, "perlin"),
         fractal=np.full(RUNS, "fbm"), warp=np.zeros(RUNS),
     )
-    (path / "meta.json").write_text(json.dumps({"config": {}, "split": path.name}))
+    (path / "meta.json").write_text(json.dumps({"config": {}, "split": path.name, "times": (np.arange(SNAPS) * 1000.0).tolist()}))
     return path
 
 
@@ -45,7 +45,7 @@ def dataset(tmp_path):
 
 @pytest.fixture
 def scaling(dataset):
-    return Scaling.fit(dataset.snapshots, dataset.params, np.arange(len(dataset)), dataset.times)
+    return Scaling.fit(dataset.snapshots, dataset.columns, np.arange(len(dataset)), dataset.times)
 
 
 @pytest.fixture

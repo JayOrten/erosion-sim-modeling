@@ -19,10 +19,10 @@ def test_terrain_is_centered_and_in_height_units():
 
 def test_parameter_scaling_maps_the_training_range_to_unit_interval(dataset):
     runs = np.arange(len(dataset))
-    scaling = ParameterScaling.fit(dataset.params, runs, dataset.times)
+    scaling = ParameterScaling.fit(dataset.columns, runs, dataset.times)
     shortest, longest = dataset.times[1] - dataset.times[0], dataset.times[-1] - dataset.times[0]
-    low = scaling.scale(dataset.params, runs, shortest)
-    high = scaling.scale(dataset.params, runs, longest)
+    low = scaling.scale(dataset.columns, runs, shortest)
+    high = scaling.scale(dataset.columns, runs, longest)
     assert low.shape == (len(runs), len(PARAMETER_NAMES))
     np.testing.assert_allclose(low[:, 0], 0)
     np.testing.assert_allclose(high[:, 0], 1)
@@ -39,8 +39,8 @@ def test_change_scaling_round_trips():
 
 def test_change_scaling_evens_out_target_size(dataset):
     runs = np.arange(len(dataset))
-    s, times, K_ref = dataset.snapshots, dataset.times, dataset.params["K_ref"]
-    change = ChangeScaling.fit(s, dataset.params, runs, times)
+    s, times, K_ref = dataset.snapshots, dataset.times, dataset.columns["K_ref"]
+    change = ChangeScaling.fit(s, dataset.columns, runs, times)
 
     def target_rms(lag):
         dz = s[:, lag] - s[:, 0]
@@ -50,11 +50,11 @@ def test_change_scaling_evens_out_target_size(dataset):
     assert raw > 3  # without scaling, long elapsed times give much larger changes
     assert 0.5 < target_rms(SNAPS - 1) / target_rms(1) < 2.0
     # The targets are about size 1, so sigma_data is near 1.
-    assert 0.5 < change_rms(s, dataset.params, runs, times, change) < 2.0
+    assert 0.5 < change_rms(s, dataset.columns, runs, times, change) < 2.0
 
 
 def test_scaling_round_trips_through_a_dict(dataset):
     from dataclasses import asdict
 
-    scaling = Scaling.fit(dataset.snapshots, dataset.params, np.arange(len(dataset)), dataset.times)
+    scaling = Scaling.fit(dataset.snapshots, dataset.columns, np.arange(len(dataset)), dataset.times)
     assert Scaling.from_dict(asdict(scaling)) == scaling

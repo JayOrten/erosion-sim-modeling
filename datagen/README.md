@@ -31,10 +31,12 @@ package), drawn per run from the profile's ranges. Datasets made before the terr
 under `Terrain`'s names (with `terrain_seed`, and noise types as indices) do not open with `Split`;
 regenerate them.
 
-Output goes to `../artifacts/data/<profile>/<split>/` (or `$EROSION_ARTIFACTS/data/...` if set): `snapshots.npy` (float32, shape
-`(runs, snapshots, rows, cols)`), `params.npz`, and `meta.json`. `params.npz` holds one array per run
-for each erosion parameter (`K`, `K_ref`, `D`, `m`, `U`) and each field of `erosion_terrain.Terrain`,
-plus the snapshot `times`. The main project opens a split with `erosion_sim.data.Split`.
+Output goes to `../artifacts/data/<profile>/<split>/`, or `$EROSION_ARTIFACTS/data/...` if set:
+`snapshots.npy` (float32, shape `(runs, snapshots, rows, cols)`), `runs.npz`, and `meta.json`.
+`runs.npz` is the run table: one array per column, one row per run. Columns are `index`, each erosion
+parameter (`K`, `K_ref`, `D`, `m`, `U`), and each field of `erosion_terrain.Terrain`. `meta.json` holds
+the config and the snapshot `times`.
+The main project opens a split with `erosion_sim.data.Split`.
 
 `src/erosion_datagen/timing.py` times the simulator. The main package runs it as a separate process
 to compare the simulator's speed with the models'.

@@ -211,7 +211,7 @@ def test_predict_and_rollout_with_a_diffusion_model(data_root, tmp_path):
     train(get_config("smoke", "diffusion"), data_root=data_root, show=False, out=out)
     model, scaling, _, _ = load_checkpoint(out, device="cpu")
     val = Split(data_root / "val")
-    params, z0 = val.params, val.snapshots[0, 0].astype(np.float64)
+    params, z0 = val.columns, val.snapshots[0, 0].astype(np.float64)
 
     three = predict(model, scaling, z0, params, 0, 1000.0, samples=3, seed=5, steps=4)
     assert three.shape == (3, *z0.shape) and np.isfinite(three).all()

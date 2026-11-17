@@ -40,9 +40,9 @@ def write_world_runs(root, size=48):
     np.save(path / "snapshots.npy", np.stack([z0 - t / 1e4 for t in times], axis=1).astype(np.float32))
     n = len(TERRAINS)
     terrain = {name: np.array([getattr(t, name) for t in TERRAINS]) for name in TERRAIN_FIELDS}
-    np.savez(path / "params.npz", times=times, K=np.full(n, 3e-4), K_ref=np.full(n, 2.5e-4), D=np.full(n, 2.5e-4),
+    np.savez(path / "runs.npz", index=np.arange(n), K=np.full(n, 3e-4), K_ref=np.full(n, 2.5e-4), D=np.full(n, 2.5e-4),
              m=np.full(n, 0.4), U=np.zeros(n), **terrain)
-    (path / "meta.json").write_text(json.dumps({"config": {}, "split": "test"}))
+    (path / "meta.json").write_text(json.dumps({"config": {}, "split": "test", "times": times.tolist()}))
     return root
 
 

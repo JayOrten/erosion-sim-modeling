@@ -28,7 +28,7 @@ def make_pairs(data: Split, run, start, end, z_a: np.ndarray, z_b: np.ndarray) -
     """A ``pairs`` dict for pairs (``run[i]``, snapshot ``start[i]``, snapshot ``end[i]``) of ``data``, with
     heightmaps ``z_a`` and ``z_b``. Its only method is "no change"."""
     run, start, end = (np.broadcast_to(np.asarray(v, dtype=np.int64), (len(z_a),)) for v in (run, start, end))
-    params, times = data.params, data.times
+    params, times = data.columns, data.times
     return {
         "methods": ["no change"], "kind": {"no change": "baseline"}, "spread": {},
         "z_a": z_a, "z_b": z_b, "no change": z_a.copy(),
@@ -78,7 +78,7 @@ def predict_pairs(checkpoints: Path | dict[str, Path], split: str = "val", count
         raise ValueError("checkpoints must share data_profile, runs and lags to be compared on the same pairs")
     _, scaling, cfg, _ = next(iter(loaded.values()))
     split_data = Split.open(cfg.data_profile, split, data_root)
-    params = split_data.params
+    params = split_data.columns
     data = ErosionPairs(split_data, scaling, runs=split_data.select(**dict(cfg.runs)), lags=cfg.lags)
     picks = np.sort(np.random.default_rng(seed).choice(len(data), min(count, len(data)), replace=False))
     run, start, end = data.locate(picks)

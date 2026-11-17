@@ -72,8 +72,9 @@ def test_make_dataset_round_trips(tmp_path):
     out = make_dataset(CFG, "val", tmp_path)
     snapshots, params, meta = load_dataset(out)
     assert snapshots.shape == (CFG.val_runs, CFG.steps // CFG.snapshot_every + 1, *CFG.shape)
-    assert params["times"][-1] == CFG.steps * CFG.dt
+    assert meta["times"][-1] == CFG.steps * CFG.dt
     assert meta["split"] == "val"
+    np.testing.assert_array_equal(params["index"], np.arange(CFG.val_runs))
     # Run 0 regenerated on its own matches the stored copy.
     z0 = run_terrain({k: v[0] for k, v in params.items()}).heights(0, 0, *CFG.shape)
     alone = simulate(

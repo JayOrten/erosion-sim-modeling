@@ -157,7 +157,9 @@ collide.
   resuming from `last.pt` if present. Exits at once if the model is already finished.
 - `slurm/train.sbatch`: one GPU. It asks Slurm for a signal 10 minutes before the time limit. On that
   signal, training saves `last.pt` and exits, and the job requeues itself. The next start resumes, so
-  a run longer than 24 hours just continues.
+  a run longer than 24 hours just continues. A requeued job keeps its job ID and appends to its log.
+- Each job checks at start that the repo is at the commit it was submitted with (passed in an
+  environment variable), and fails with a clear message if not. Edit freely, then commit and resubmit.
 
 Check-in: a smoke DLA model trained on the cluster, killed by a short time limit, and resumed to the
 same result as an uninterrupted run.
@@ -198,6 +200,11 @@ Run an experiment with one command, and view it in one notebook.
   - submits one `train.sbatch` job for each model not yet finished;
   - submits `evaluate.sbatch` with a dependency on those jobs (`--dependency=afterok`);
   - prints the job IDs. `--dry-run` prints the jobs without submitting.
+  - Skips finished models. A model already queued or running, for example from another experiment, is
+    found by job name (the model hash) with `squeue`, and waited on instead of trained twice.
+  - Refuses to run if `src/` has uncommitted changes.
+- A failed training job leaves evaluation pending. Running `submit` again resubmits only what is
+  missing.
 - `notebooks/experiments/<name>.ipynb`: loads the results folder, shows the tables and plots, and
   holds the written conclusion. No training or simulation inside.
 - `notebooks/experiments/summary.ipynb`: every `results.json` in one table.
@@ -297,5 +304,10 @@ Built when the experiment that needs them comes up, each with smoke tests first:
 - Where notebooks run: on the cluster through Jupyter, or locally after copying
   `$EROSION_ARTIFACTS/results/` with rsync. Results are small either way. Locally, the notebooks never
   need the data.
+- Requeue: whether users may run `scontrol requeue` on their own jobs. The fallback is a job that
+  resubmits itself with `sbatch`. Needed by step 4.
+- CPU allocation for datagen: whole node or not, and how many cores. Sets `--cpus-per-task`.
+- Whether the commit check is too strict. The alternative is copying the source into each job at
+  submit time.
 - Time limit for CPU jobs. Datagen resumes after a limit, so it only changes how often jobs are
   resubmitted.

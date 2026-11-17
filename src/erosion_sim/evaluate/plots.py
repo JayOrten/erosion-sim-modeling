@@ -25,7 +25,7 @@ def show_predictions(path: Path, count: int = 3, split: str = "val", data_root: 
     """
     model, scaling, cfg, _ = load_checkpoint(path)
     split_data = Split.open(cfg.data_profile, split, data_root)
-    params = split_data.params
+    params = split_data.columns
     data = ErosionPairs(split_data, scaling, runs=split_data.select(**dict(cfg.runs)), lags=cfg.lags)
     fig, axes = plt.subplots(count, 6, figsize=(19, 3.3 * count), layout="constrained", squeeze=False)
     for row, i in zip(axes, np.random.default_rng(seed).choice(len(data), count, replace=False)):
@@ -64,7 +64,7 @@ def show_comparison(checkpoints: dict[str, Path], count: int = 3, split: str = "
     loaded = {name: load_checkpoint(path) for name, path in checkpoints.items()}
     cfg = next(iter(loaded.values()))[2]
     split_data = Split.open(cfg.data_profile, split, data_root)
-    params = split_data.params
+    params = split_data.columns
     data = ErosionPairs(split_data, next(iter(loaded.values()))[1], runs=split_data.select(**dict(cfg.runs)),
                         lags=cfg.lags)
     picks = np.random.default_rng(seed).choice(len(data), count, replace=False)
@@ -122,7 +122,7 @@ def comparison_gif(
     if lag is None:
         lag = default_lag(cfg)
     data = Split.open(cfg.data_profile, split, data_root)
-    params, snapshots, times = data.params, data.snapshots, data.times
+    params, snapshots, times = data.columns, data.snapshots, data.times
     picks = np.arange(0, len(times), lag)
     sim = np.asarray(snapshots[run, picks], dtype=np.float64)
     dT = float(times[lag] - times[0])

@@ -235,11 +235,12 @@ def make_dataset(
 
     - ``snapshots.npy``: float32, shape (runs, snapshots, rows, cols). Written as a memory map, so
       readers can load it lazily with ``np.load(path, mmap_mode="r")``.
-    - ``params.npz``: one array of length ``runs`` per erosion parameter (``K``, ``K_ref``, ``D``, ``m``,
-      ``U``) and per ``Terrain`` field (``seed``, ``period``, ``persistence``, ``octaves``, ``lacunarity``,
-      ``height``, ``noise``, ``fractal``, ``warp``; noise and fractal as names), plus ``times`` (yr) for
-      the snapshots.
-    - ``meta.json``: the config and package versions. Written last, so it marks a finished split.
+    - ``runs.npz``: the run table. One array of length ``runs`` per column: ``index`` (the run's position
+      in the split), each erosion parameter (``K``, ``K_ref``, ``D``, ``m``, ``U``), and each ``Terrain``
+      field (``seed``, ``period``, ``persistence``, ``octaves``, ``lacunarity``, ``height``, ``noise``,
+      ``fractal``, ``warp``; noise and fractal as names).
+    - ``meta.json``: the config, the snapshot ``times`` (yr), and package versions. Written last, so it
+      marks a finished split.
 
     Resumable: while it runs, ``progress.json`` holds the settings and the runs already on disk (each
     added only after its snapshots are flushed). Called again after an interruption, with the same
@@ -311,10 +312,11 @@ def make_dataset(
     snapshots.flush()
     del snapshots
 
-    np.savez(out_dir / "params.npz", times=times, **params)
+    np.savez(out_dir / "runs.npz", index=np.arange(n), **params)
     meta = {
         "config": {k: v for k, v in vars(cfg).items()},
         "split": split,
+        "times": times.tolist(),
         "versions": {
             "landlab": _version("landlab"),
             "richdem": _version("richdem"),
@@ -328,12 +330,13 @@ def make_dataset(
 
 
 def load_dataset(path: Path) -> tuple[np.ndarray, dict[str, np.ndarray], dict]:
-    """Return (snapshots as a read-only memory map, params, meta) for a directory written by make_dataset."""
+    """Return (snapshots as a read-only memory map, run table columns, meta) for a directory written by
+    make_dataset."""
     path = Path(path)
     snapshots = np.load(path / "snapshots.npy", mmap_mode="r")
-    with np.load(path / "params.npz") as f:
-        params = dict(f)
-    return snapshots, params, json.loads((path / "meta.json").read_text())
+    with np.load(path / "runs.npz") as f:
+        columns = dict(f)
+    return snapshots, columns, json.loads((path / "meta.json").read_text())
 
 
 def _version(package: str) -> str:

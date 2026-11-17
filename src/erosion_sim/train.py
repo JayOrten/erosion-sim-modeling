@@ -59,7 +59,7 @@ def make_datasets(cfg: Config, data_root: Path | None = None
     train_data, val_data = (Split.open(cfg.data_profile, split, data_root) for split in ("train", "val"))
     train_runs, val_runs = (data.select(**dict(cfg.runs)) for data in (train_data, val_data))
     block = cfg.block if cfg.level == "coarse" else 1
-    snapshots, params, times = train_data.snapshots, train_data.params, train_data.times
+    snapshots, params, times = train_data.snapshots, train_data.columns, train_data.times
     scaling = Scaling.fit(snapshots, params, train_runs, times, block=block)
     sigma_data = change_rms(snapshots, params, train_runs, times, scaling.change, block=block)
     if cfg.level == "coarse":

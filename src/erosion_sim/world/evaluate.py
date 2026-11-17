@@ -87,7 +87,7 @@ def level_pairs(coarse: tuple, fine: tuple, split: str = "val", count: int = 256
     if (ccfg.runs, ccfg.lags, ccfg.block) != (fcfg.runs, fcfg.lags, fcfg.block):
         raise ValueError("the two levels must share runs, lags, and block, so their items are the same pairs")
     data = Split.open(fcfg.data_profile, split, data_root)
-    params = data.params
+    params = data.columns
     runs = data.select(**dict(fcfg.runs))
     block = fcfg.block
     # Levels trained away from the run's edge are tested there too: the coarse level on the run's whole

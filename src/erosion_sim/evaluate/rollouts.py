@@ -31,7 +31,7 @@ def rollout_error(checkpoint: Path, split: str = "val", runs: int = 64, lag: int
     model, scaling, cfg, _ = load_checkpoint(checkpoint)
     lag = default_lag(cfg) if lag is None else lag
     data = Split.open(cfg.data_profile, split, data_root)
-    params, snapshots, times = data.params, data.snapshots, data.times
+    params, snapshots, times = data.columns, data.snapshots, data.times
     matching = data.select(**dict(cfg.runs))
     chosen = np.random.default_rng(seed).choice(matching, min(runs, len(matching)), replace=False)
     picks = np.arange(0, len(times), lag)

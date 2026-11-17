@@ -81,8 +81,8 @@ class _LevelItems(ErosionPairs):
     def _item(self, index: int, z_a: np.ndarray, z_b: np.ndarray, extra: np.ndarray | None, run, a, b,
               **more) -> dict:
         """The item for start ``z_a`` and end ``z_b`` (m). ``extra`` is a change in m, added as an input channel."""
-        dT, K_ref = self.times[b] - self.times[a], self.params["K_ref"][run]
-        cond = self.scaling.parameters.scale(self.params, run, dT)
+        dT, K_ref = self.times[b] - self.times[a], self.columns["K_ref"][run]
+        cond = self.scaling.parameters.scale(self.columns, run, dT)
         channels = [terrain_to_model(z_a)]
         if extra is not None:
             channels.append(self.scaling.change.to_model(extra, K_ref, dT))
