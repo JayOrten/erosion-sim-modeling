@@ -148,7 +148,7 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
     With ``resume=True``, continues from ``<objective>-<profile>-last.pt``: model, optimizer, learning-rate
     schedule, history, and position in the training order. The config must match the saved one, except
     for the fields in ``_RESUMABLE_CHANGES``.
-    Keyword overrides replace ``cfg`` fields, for example ``train(PROFILES["fixed_dt"], steps=500)``.
+    Keyword overrides replace ``cfg`` fields, for example ``train(PROFILES["smoke"], steps=500)``.
     Returns the training history, plus the checkpoint path under ``"checkpoint"``.
     """
     cfg = replace(cfg, **overrides)

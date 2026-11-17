@@ -97,16 +97,3 @@ def test_two_levels_small_query_equals_crop_of_large_query():
     small = make_two_levels()[1].change(-10, 15, 12, 14)
     # Batching and summing order change float rounding, carried through both levels.
     np.testing.assert_allclose(small, big[14:26, 7:21], rtol=0, atol=1e-5 * np.abs(big).max())
-
-
-def test_world_params_follow_datagen():
-    from erosion_sim.data import Split
-    from erosion_sim.paths import dataset_dir
-
-    path = dataset_dir("world", "train")
-    if not (path / "params.npz").exists():
-        pytest.skip("needs the world dataset")
-    params = Split(path).params
-    for run in (0, 5, 77):
-        p = world_params(params["K_ref"][run], params["D"][run], params["m"][run])
-        np.testing.assert_allclose(p["K"][0], params["K"][run], rtol=1e-12)

@@ -1,0 +1,12 @@
+- i think those claims are good, they cover all the facets of what should make a neural surrogate good.
+- backbone experiment sounds good, we just need to flesh out the specifics. FNO regrerssion baseline doesn't sound bad but I don't ahve background in why that would be a good baseline
+- the real purpose of diffusion is to sample instead of regress to a mean tbh, in my mind. Yeah i guess that's what you're saying with not blurring detail. It isn't bnad to compare to regression, we could include that. Idk much about the residfual diffusion thing and why that would be compelling. I am curious about comparing to flow matching.
+- feels like we need to just map these out in more detail, I'd like you to right out a doc/plan for these different experriments and we'll flesh out the details
+- testing the infinitediffusion tricks sounds good, I just need to understand what the tricks actually are more deeply, that was the one part of the paper I really struggled with. I think my biggest problem with it was understanding where they even came up with that kind of stuff, just a lot of trial and error?
+- these are some creative ideas on the rivers and water flow bnut I need to think through them more fully to understand
+- I think the big focus I have right now is setting up all the repo and code so that I can gather complete data in order to run this wide variety of experiments. I want the codebase to have everythign I need and be nice and flexible so I don't have to keep coming back to data generation because it takes a while.
+- These phases are okay but yeah we reall yneed to flesh them out in a doc. I want to know very specficially what kind of data we are going to generate and then very specifically for each experimment what exactly we are going to test.
+- hoping to shoot for something like siggraph, definitely not a geoscience venue.
+- compute includes the gpu on this machine, a 4080. But if we really need it I have access to a whole cluster of a100s, it's just a lot more work because I have to set up slurm and transfer the data.
+- real elevation data should be done, include that in the plan
+- idk on period, yes if it's relevant to the experiments...just dpeends on the experimment specifics.

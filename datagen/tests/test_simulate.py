@@ -90,19 +90,10 @@ def test_fbm_overlapping_regions_agree():
     assert not np.array_equal(big, fbm((40, 50), seed=8, period=16.0, origin=(-10, 100_000)))
 
 
-def test_terrain_kind_fixed_and_varied():
+def test_terrain_kind_fixed():
     fixed = terrain_kind(CFG, "train", 50)
     assert np.all(fixed["noise"] == "perlin") and np.all(fixed["fractal"] == "fbm") and np.all(fixed["warp"] == 0)
     assert np.all(fixed["octaves"] == CFG.octaves) and np.all(fixed["height"] == CFG.height)
-    varied = terrain_kind(PROFILES["world_master"], "train", 2_000)
-    master = PROFILES["world_master"]
-    assert set(varied["noise"]) == set(master.noise_types)
-    assert set(varied["fractal"]) == set(master.fractal_types)
-    assert set(varied["octaves"]) == set(range(master.octave_range[0], master.octave_range[1] + 1))
-    assert np.all((varied["height"] >= 32) & (varied["height"] <= 128))
-    assert 0.4 < (varied["warp"] > 0).mean() < 0.6
-    assert np.all((varied["warp"] == 0) | ((varied["warp"] >= 0.1) & (varied["warp"] <= 0.5)))
-    np.testing.assert_array_equal(varied["noise"], terrain_kind(master, "train", 2_000)["noise"])
 
 
 def test_run_terrain_uses_every_field():

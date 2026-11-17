@@ -94,61 +94,6 @@ PROFILES = {
         num_workers=0,
         compile=False,
     ),
-    # Memorize 10 pairs. If the loss does not go near zero, the pipeline is broken.
-    "overfit": Config(
-        profile="overfit",
-        data_profile="full",
-        max_train_samples=10,
-        batch_size=10,
-        lr=1e-3,
-        weight_decay=0.0,
-        steps=2_000,
-        warmup_steps=50,
-        ema_decay=0.99,
-        eval_every=500,
-        val_samples=256,
-        num_workers=2,
-        compile=False,
-    ),
-    # One elapsed time (10,000 yr), no uplift. Step 9 of docs/plans/unet-baseline-plan.md.
-    "fixed_dt": Config(
-        profile="fixed_dt",
-        data_profile="full",
-        runs=(("U", (0.0, 0.0)),),
-        lags=(10,),
-        steps=20_000,
-    ),
-    # Every elapsed time, no uplift. One pass over every pair, about 53,000 steps at batch 64. Step 10 of
-    # docs/plans/unet-baseline-plan.md.
-    "variable_dt": Config(
-        profile="variable_dt",
-        data_profile="full",
-        runs=(("U", (0.0, 0.0)),),
-        epochs=1.0,
-        patience=10,
-        batch_size=64,
-    ),
-    # The two levels of the infinite world (docs/plans/infinite-plan.md, step 5), trained as diffusion
-    # models. Every elapsed time, no uplift, and free edges. Short budgets: the
-    # first goal is output that is sensible, not good.
-    "world_coarse": Config(
-        profile="world_coarse",
-        data_profile="world",
-        runs=(("U", (0.0, 0.0)),),
-        fixed_edges=False,
-        level="coarse",
-        batch_size=64,
-        steps=20_000,
-    ),
-    "world_fine": Config(
-        profile="world_fine",
-        data_profile="world",
-        runs=(("U", (0.0, 0.0)),),
-        fixed_edges=False,
-        level="fine",
-        batch_size=64,
-        steps=20_000,
-    ),
 }
 
 
