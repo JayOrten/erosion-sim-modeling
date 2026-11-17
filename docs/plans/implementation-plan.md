@@ -141,28 +141,30 @@ Train any model from the command line, as one Slurm job, with a checkpoint locat
 collide.
 
 - `Config` gains:
-  - `task`: `erosion` or `dla`.
+  - `task`: `erosion` or `dla`. DLA training uses `DLAPairs`, `repeats` items per run, and the target's
+    standard deviation as `sigma_data`.
   - `backbone`: `unet` for now. `dit` and `fno` arrive in step 7 and later.
-  - `objective`: `regression` or `edm` for now. `flow_matching` arrives in step 7.
-  - `data`: the selection filters from step 2.
-  - `conditioning`: the list of conditioning names, with `U` dropped for erosion.
-  - `extra_inputs`: empty for now. Later the erodibility map and drainage area.
-- `identity.py`: a model's name is its experiment-facing label plus the first 8 hex digits of the
-  SHA-256 of its config as canonical JSON. Fields that do not change the trained weights
-  (`num_workers`, `log_every`) are left out of the hash. Two experiments that ask for the same model
-  get the same folder, so the plan's reuse rule needs no bookkeeping.
-- `train.py`: same loop. Saves `best.pt`, `last.pt`, `config.json`, and `history.json` in the model
-  folder. Nothing plots during training.
-- `erosion-sim train <experiment> <model>`: looks up the config in the registry and trains it,
-  resuming from `last.pt` if present. Exits at once if the model is already finished.
-- `slurm/train.sbatch`: one GPU. It asks Slurm for a signal 10 minutes before the time limit. On that
-  signal, training saves `last.pt` and exits, and the job requeues itself. The next start resumes, so
-  a run longer than 24 hours just continues. A requeued job keeps its job ID and appends to its log.
-- Each job checks at start that the repo is at the commit it was submitted with (passed in an
-  environment variable), and fails with a clear message if not. Edit freely, then commit and resubmit.
+  - `objective`: `regression` or `edm` (renamed from `diffusion`). `flow_matching` arrives in step 7.
+  - `data`: the selection filters from step 2, replacing `runs`.
+  - The erosion conditioning list (dropping `U`) and extra input channels move to step 10 and step 12,
+    where the erosion recipe changes.
+- `identity.py`: a model's folder is `<profile>-<hash>`, the hash being the first 8 hex digits of the
+  SHA-256 of its config as canonical JSON. `profile`, `num_workers`, `log_every`, and `compile` are left
+  out of the hash. An existing folder with the same hash is reused under any label, so the plan's reuse
+  rule needs no bookkeeping.
+- `train.py`: same loop. Saves `config.json` (with the git commit), `best.pt`, `last.pt`,
+  `history.json`, and `done.json` in the model folder. Resumes from `last.pt` whenever it exists.
+  Nothing plots during training.
+- `erosion-sim train <profile> [--set field=value ...]`: trains one model, resuming if interrupted, and
+  does nothing if it is finished. Step 6 adds lookup by experiment and model name.
+- `slurm/train.sbatch`: one GPU, 24 hours. No requeue logic: runs are expected to finish within the
+  limit. If one dies, submitting it again resumes from `last.pt`.
+- With `EROSION_COMMIT` set, a job fails unless the repo is at that commit with no uncommitted changes
+  in `src/`.
+- Old checkpoints (`objective = "diffusion"`, `runs`) no longer load. They needed retraining anyway.
 
-Check-in: a smoke DLA model trained on the cluster, killed by a short time limit, and resumed to the
-same result as an uninterrupted run.
+Check-in: a smoke DLA model trained with the job script, interrupted, and resumed to the same result as
+an uninterrupted run. Done locally; the cluster run waits until the cluster is available.
 
 ### 5. Results and the DLA suite
 
@@ -304,8 +306,6 @@ Built when the experiment that needs them comes up, each with smoke tests first:
 - Where notebooks run: on the cluster through Jupyter, or locally after copying
   `$EROSION_ARTIFACTS/results/` with rsync. Results are small either way. Locally, the notebooks never
   need the data.
-- Requeue: whether users may run `scontrol requeue` on their own jobs. The fallback is a job that
-  resubmits itself with `sbatch`. Needed by step 4.
 - CPU allocation for datagen: whole node or not, and how many cores. Sets `--cpus-per-task`.
 - Whether the commit check is too strict. The alternative is copying the source into each job at
   submit time.

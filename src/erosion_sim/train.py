@@ -1,10 +1,10 @@
-"""Train a model on snapshot pairs, and load saved checkpoints."""
+"""Train a model, save it in its model folder (``identity.py``), and load saved checkpoints."""
 
 import copy
+import json
 import math
 import time
 from dataclasses import asdict, replace
-from functools import partial
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -12,13 +12,14 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Sampler, Subset
 
+from . import data as erosion_data
 from .config import Config
-from .data import ErosionPairs, Split
 from .diffusion import VAL_SIGMAS, Denoiser, denoising_loss, step_generator, training_loss
+from .dla import data as dla_data
+from .identity import config_hash, model_dir, to_json
 from .model import UNet, count_parameters
-from .normalization import PARAMETER_NAMES, Scaling, change_rms
-from .paths import checkpoint_path, last_checkpoint_path
-from .world.data import ErosionCoarse, ErosionCrops
+from .normalization import Scaling
+from .paths import git_state
 
 
 # Config fields that may differ when resuming: they do not change what is trained.
@@ -48,39 +49,13 @@ def training_order(size: int, count: int, seed: int) -> np.ndarray:
     return np.concatenate(passes)[:count]
 
 
-def make_datasets(cfg: Config, data_root: Path | None = None
-                  ) -> tuple[ErosionPairs, ErosionPairs, Scaling, float]:
-    """Training and validation pairs for ``cfg``, the ``Scaling`` fitted on the training runs, and
-    ``sigma_data``, the RMS of the training target.
-
-    World levels use ``ErosionCoarse`` or ``ErosionCrops`` (``cfg.level``); the coarse level's change
-    scaling and ``sigma_data`` are measured on block means, as it sees them.
-    """
-    train_data, val_data = (Split.open(cfg.data_profile, split, data_root) for split in ("train", "val"))
-    train_runs, val_runs = (data.select(**dict(cfg.runs)) for data in (train_data, val_data))
-    block = cfg.block if cfg.level == "coarse" else 1
-    snapshots, params, times = train_data.snapshots, train_data.columns, train_data.times
-    scaling = Scaling.fit(snapshots, params, train_runs, times, block=block)
-    sigma_data = change_rms(snapshots, params, train_runs, times, scaling.change, block=block)
-    if cfg.level == "coarse":
-        make = partial(ErosionCoarse, block=cfg.block, crop=cfg.coarse_crop, margin=cfg.margin, seed=cfg.seed)
-    elif cfg.level == "fine":
-        make = partial(ErosionCrops, crop=cfg.crop, block=cfg.block, margin=cfg.margin, seed=cfg.seed)
-    else:
-        make = ErosionPairs
-    extra = {"repeats": cfg.repeats} if cfg.level else {}
-    train = make(train_data, scaling, runs=train_runs, lags=cfg.lags, **extra)
-    val = make(val_data, scaling, runs=val_runs, lags=cfg.lags)
-    return train, val, scaling, sigma_data
-
-
 def build_model(cfg: Config, sigma_data: float = 1.0) -> UNet | Denoiser:
-    """The U-Net for regression, or the U-Net inside an EDM denoiser for diffusion."""
+    """The U-Net for regression, or the U-Net inside an EDM denoiser."""
     unet = dict(channels=cfg.channels, blocks=cfg.blocks, emb_dim=cfg.emb_dim, attention=cfg.attention,
                 fixed_edges=cfg.fixed_edges, in_channels=cfg.in_channels)
-    if cfg.objective == "diffusion":
-        return Denoiser(len(PARAMETER_NAMES), sigma_data=sigma_data, **unet)
-    return UNet(len(PARAMETER_NAMES), **unet)
+    if cfg.objective == "edm":
+        return Denoiser(cfg.cond_dim, sigma_data=sigma_data, **unet)
+    return UNet(cfg.cond_dim, **unet)
 
 
 @torch.no_grad()
@@ -101,15 +76,17 @@ def _lr_factor(step: int, cfg: Config) -> float:
 
 
 @torch.no_grad()
-def evaluate_loss(model, loader, device, bf16, objective: str = "regression", seed: int = 0) -> dict:
+def evaluate_loss(model, loader, device, bf16, objective: str = "regression", seed: int = 0,
+                  baseline_is_input: bool = False) -> dict:
     """Validation loss and skill over every batch of ``loader``. ``loader`` must not shuffle.
 
     - Regression: ``val_loss`` is the MSE of the prediction.
-    - Diffusion: ``val_loss`` is the EDM loss. Pair ``k`` is noised at ``VAL_SIGMAS[k % 8]``, with noise
+    - EDM: ``val_loss`` is the EDM loss. Pair ``k`` is noised at ``VAL_SIGMAS[k % 8]``, with noise
       drawn from ``seed``, so every evaluation uses the same noise. Not comparable with regression.
 
-    ``val_skill`` is ``1 - MSE / MSE(no change)``. For diffusion it scores the denoised estimate at
-    those noise levels, not a full sample.
+    ``val_skill`` is ``1 - MSE / MSE(no change)``. No change is a zero target for erosion (the target is a
+    change), and the input itself for DLA (``baseline_is_input``; the target is the later cluster). For EDM
+    it scores the denoised estimate at those noise levels, not a full sample.
     """
     model.eval()
     sq_model = sq_zero = count = 0.0
@@ -118,7 +95,7 @@ def evaluate_loss(model, loader, device, bf16, objective: str = "regression", se
     for batch in loader:
         x, cond, y = (batch[k].to(device, non_blocking=True) for k in ("x", "cond", "y"))
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=bf16):
-            if objective == "diffusion":
+            if objective == "edm":
                 levels = torch.tensor(VAL_SIGMAS, device=device)[torch.arange(pairs, pairs + len(y), device=device) % len(VAL_SIGMAS)]
                 noise = torch.randn(y.shape, device=device, generator=generator)
                 loss, pred = denoising_loss(model, x, cond, y, levels * model.sigma_data, noise)
@@ -126,30 +103,40 @@ def evaluate_loss(model, loader, device, bf16, objective: str = "regression", se
             else:
                 pred = model(x, cond)
         sq_model += (pred.float() - y).pow(2).sum().item()
-        sq_zero += y.pow(2).sum().item()
+        sq_zero += (y - x[:, :1] if baseline_is_input else y).pow(2).sum().item()
         count += y.numel()
         pairs += len(y)
     model.train()
     mse, mse_zero = sq_model / count, sq_zero / count
-    val_loss = loss_sum / pairs if objective == "diffusion" else mse
+    val_loss = loss_sum / pairs if objective == "edm" else mse
     return {"val_loss": val_loss, "val_skill": 1 - mse / mse_zero}
 
 
-def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Path | None = None, resume: bool = False,
+def _write_json(path: Path, value) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(value, indent=2, default=str))
+    tmp.replace(path)  # atomic, so an interruption never leaves a half-written file
+
+
+def train(cfg: Config, data_root: Path | None = None, show: bool = False, out: Path | None = None,
           **overrides) -> dict:
-    """Train a model for ``cfg`` and save the checkpoint with the best validation loss.
+    """Train a model for ``cfg`` in its model folder, ``out`` (default ``identity.model_dir(cfg)``).
+
+    Writes ``config.json`` at the start, ``best.pt`` whenever the validation loss improves, ``last.pt`` and
+    ``history.json`` at every evaluation, and ``done.json`` at the end (see ``identity.py``).
 
     With ``cfg.ema_decay`` set, a second copy of the model keeps an exponential moving average (EMA) of
     the training weights. Validation, early stopping, and the saved ``"model"`` use the EMA copy; the last
     checkpoint also keeps the training weights, as ``"train_model"``, for resuming.
 
-    At every evaluation, the latest state (with the optimizer) is also saved to ``<objective>-<profile>-last.pt``.
+    If ``last.pt`` exists, training resumes from it: model, optimizer, learning-rate schedule, history,
+    and position in the training order. The config must match the saved one, except for the fields in
+    ``_RESUMABLE_CHANGES``. A resumed run gives the same result as an uninterrupted one. So if a job dies,
+    submitting it again continues from the last evaluation.
+
     Stops early after ``cfg.patience`` evaluations without a better validation loss.
-    With ``resume=True``, continues from ``<objective>-<profile>-last.pt``: model, optimizer, learning-rate
-    schedule, history, and position in the training order. The config must match the saved one, except
-    for the fields in ``_RESUMABLE_CHANGES``.
     Keyword overrides replace ``cfg`` fields, for example ``train(PROFILES["smoke"], steps=500)``.
-    Returns the training history, plus the checkpoint path under ``"checkpoint"``.
+    Returns the training history, plus the model folder under ``"folder"``.
     """
     cfg = replace(cfg, **overrides)
     torch.manual_seed(cfg.seed)
@@ -161,7 +148,11 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    train_data, val_data, scaling, sigma_data = make_datasets(cfg, data_root)
+    if cfg.task == "dla":
+        train_data, val_data, sigma_data = dla_data.make_datasets(cfg, data_root)
+        scaling = None
+    else:
+        train_data, val_data, scaling, sigma_data = erosion_data.make_datasets(cfg, data_root)
     rng = np.random.default_rng(cfg.seed)
     if cfg.max_train_samples is not None:
         train_data = Subset(train_data, rng.choice(len(train_data), cfg.max_train_samples, replace=False))
@@ -175,28 +166,30 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
     ema = copy.deepcopy(model).requires_grad_(False) if cfg.ema_decay is not None else None
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay, fused=use_cuda)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: _lr_factor(step, cfg))
-    out = Path(out) if out is not None else checkpoint_path(cfg.profile, cfg.objective)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    last = last_checkpoint_path(out)
+    out = Path(out) if out is not None else model_dir(cfg)
+    out.mkdir(parents=True, exist_ok=True)
+    best_path, last_path = out / "best.pt", out / "last.pt"
 
     history = {"step": [], "train_loss": [], "lr": [], "eval_step": [], "val_loss": [], "val_skill": [],
                "objective": cfg.objective}
     best, since_best, done = math.inf, 0, 0
-    if resume:
-        saved = torch.load(last, map_location=device, weights_only=False)
+    if last_path.exists():
+        saved = torch.load(last_path, map_location=device, weights_only=False)
         saved_cfg = asdict(Config(**saved["config"]))  # fills fields added since the save with defaults
         changed = {k for k, v in asdict(cfg).items() if saved_cfg[k] != v} - _RESUMABLE_CHANGES
         if changed:
-            raise ValueError(f"config differs from {last.name} in {sorted(changed)}; cannot resume")
+            raise ValueError(f"config differs from {last_path} in {sorted(changed)}; cannot resume")
         model.load_state_dict(saved["train_model"] if ema is not None else saved["model"])
         if ema is not None:
             ema.load_state_dict(saved["model"])
         opt.load_state_dict(saved["optimizer"])
         sched.load_state_dict(saved["scheduler"])
         history, done = saved["history"], saved["step"]
-        best = min(history["val_loss"])
-        since_best = len(history["val_loss"]) - 1 - int(np.argmin(history["val_loss"]))
-        print(f"resuming from {last.name} at step {done}", flush=True)
+        best = min(history["val_loss"], default=math.inf)
+        since_best = len(history["val_loss"]) - 1 - int(np.argmin(history["val_loss"])) if history["val_loss"] else 0
+        print(f"resuming from {last_path} at step {done}", flush=True)
+    else:
+        _write_json(out / "config.json", {"config": to_json(asdict(cfg)), "hash": config_hash(cfg), **git_state()})
 
     order = training_order(len(train_data), cfg.steps * cfg.batch_size, cfg.seed)[done * cfg.batch_size:]
     train_loader = DataLoader(train_data, sampler=_OrderSampler(order), drop_last=True, **loader_args)
@@ -204,13 +197,27 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
     step_model = torch.compile(model) if cfg.compile and use_cuda else model
     eval_model = ema if ema is not None else step_model
 
-    print(f"{cfg.profile}: {count_parameters(model):,} parameters, {len(train_data):,} training pairs, "
-          f"{len(val_subset):,} validation pairs, device {device}", flush=True)
-    running, seen, start = 0.0, 0, time.perf_counter()
+    def state(step: int) -> dict:
+        return {"model": (ema if ema is not None else model).state_dict(), "config": asdict(cfg),
+                "scaling": asdict(scaling) if scaling is not None else None, "sigma_data": sigma_data,
+                "step": step, "history": history}
+
+    def save_last(step: int) -> None:
+        resume_state = {"optimizer": opt.state_dict(), "scheduler": sched.state_dict()}
+        if ema is not None:
+            resume_state["train_model"] = model.state_dict()
+        tmp = last_path.with_suffix(".tmp")
+        torch.save({**state(step), **resume_state}, tmp)
+        tmp.replace(last_path)
+        _write_json(out / "history.json", history)
+
+    print(f"{cfg.profile} ({out.name}): {count_parameters(model):,} parameters, {len(train_data):,} training items, "
+          f"{len(val_subset):,} validation items, device {device}", flush=True)
+    running, seen, start, step = 0.0, 0, time.perf_counter(), done
     for step, batch in enumerate(train_loader, start=done + 1):
         x, cond, y = (batch[k].to(device, non_blocking=True) for k in ("x", "cond", "y"))
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=bf16):
-            if cfg.objective == "diffusion":
+            if cfg.objective == "edm":
                 loss = training_loss(step_model, x, cond, y, step_generator(cfg.seed, step, device))
             else:
                 loss = (step_model(x, cond).float() - y).pow(2).mean()
@@ -232,57 +239,56 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = True, out: Pa
                   f"{rate:,.0f} samples/s", flush=True)
             running, seen = 0.0, 0
         if step % cfg.eval_every == 0 or step == cfg.steps:
-            result = evaluate_loss(eval_model, val_loader, device, bf16, cfg.objective, cfg.seed)
+            result = evaluate_loss(eval_model, val_loader, device, bf16, cfg.objective, cfg.seed,
+                                   baseline_is_input=cfg.task == "dla")
             history["eval_step"].append(step)
             history["val_loss"].append(result["val_loss"])
             history["val_skill"].append(result["val_skill"])
-            saved = result["val_loss"] < best
-            state = {"model": (ema if ema is not None else model).state_dict(), "config": asdict(cfg), "scaling": asdict(scaling),
-                     "sigma_data": sigma_data, "step": step, "history": history}
-            if saved:
+            improved = result["val_loss"] < best
+            if improved:
                 best, since_best = result["val_loss"], 0
-                torch.save(state, out)
+                torch.save(state(step), best_path)
             else:
                 since_best += 1
-            resume_state = {"optimizer": opt.state_dict(), "scheduler": sched.state_dict()}
-            if ema is not None:
-                resume_state["train_model"] = model.state_dict()
-            torch.save({**state, **resume_state}, last)
+            save_last(step)
             print(f"  validation loss {result['val_loss']:.4f}  skill vs no change {result['val_skill']:.3f}"
-                  f"{'  (saved best)' if saved else ''}", flush=True)
+                  f"{'  (saved best)' if improved else ''}", flush=True)
             if cfg.patience is not None and since_best >= cfg.patience:
                 print(f"stopping early: no better validation loss in {since_best} evaluations", flush=True)
                 break
 
-    history["checkpoint"] = out
-    history["seconds"] = time.perf_counter() - start
+    seconds = time.perf_counter() - start
+    history["seconds"] = history.get("seconds", 0.0) + seconds
+    _write_json(out / "history.json", history)
+    _write_json(out / "done.json", {"step": step, "best_val_loss": best, "seconds": history["seconds"]})
     if show:
         plot_history(history)
-    return history
+    return {**history, "folder": out}
 
 
 def plot_history(history: dict) -> None:
     fig, (a, b) = plt.subplots(1, 2, figsize=(13, 4), layout="constrained")
     a.semilogy(history["step"], history["train_loss"], label="train")
     a.semilogy(history["eval_step"], history["val_loss"], "o-", label="validation")
-    diffusion = history.get("objective") == "diffusion"
-    a.set(xlabel="step", ylabel="EDM loss" if diffusion else "MSE of normalized change", title="loss")
+    edm = history.get("objective") == "edm"
+    a.set(xlabel="step", ylabel="EDM loss" if edm else "MSE of the target", title="loss")
     a.legend()
     b.plot(history["eval_step"], history["val_skill"], "o-")
     b.axhline(0, color="gray", lw=0.8)
     b.set(xlabel="step", ylabel="1 - MSE / MSE(no change)",
-          title="validation skill" + (" (one denoising step)" if diffusion else ""), ylim=(min(-0.1, *history["val_skill"]), 1))
+          title="validation skill" + (" (one denoising step)" if edm else ""), ylim=(min(-0.1, *history["val_skill"]), 1))
     plt.show()
 
 
-def load_checkpoint(path: Path, device: str | None = None) -> tuple[UNet, Scaling, Config, dict]:
-    """Return (model in eval mode, scaling, config, full checkpoint) from a saved checkpoint."""
+def load_checkpoint(path: Path, device: str | None = None) -> tuple[UNet | Denoiser, Scaling | None, Config, dict]:
+    """Return (model in eval mode, scaling, config, full checkpoint) from a model folder (its ``best.pt``)
+    or a checkpoint file. ``scaling`` is None for DLA models."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt = torch.load(path, map_location=device, weights_only=False)
+    path = Path(path)
+    ckpt = torch.load(path / "best.pt" if path.is_dir() else path, map_location=device, weights_only=False)
     cfg = Config(**ckpt["config"])
-    scaling = Scaling.from_dict(ckpt["scaling"])
+    scaling = Scaling.from_dict(ckpt["scaling"]) if ckpt.get("scaling") is not None else None
     model = build_model(cfg, ckpt["sigma_data"]).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     return model, scaling, cfg, ckpt
-

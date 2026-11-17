@@ -96,13 +96,13 @@ def test_smoke_diffusion_training(data_root, tmp_path):
     from erosion_sim.config import get_config
     from erosion_sim.train import load_checkpoint, train
 
-    out = tmp_path / "diffusion-smoke.pt"
-    history = train(get_config("smoke", "diffusion"), data_root=data_root, show=False, out=out)
+    out = tmp_path / "edm-smoke"
+    history = train(get_config("smoke", "edm"), data_root=data_root, show=False, out=out)
     assert len(history["val_loss"]) == 2
     assert all(math.isfinite(v) for v in history["train_loss"] + history["val_loss"])
 
     model, _, cfg, ckpt = load_checkpoint(out, device="cpu")
-    assert isinstance(model, Denoiser) and cfg.objective == "diffusion"
+    assert isinstance(model, Denoiser) and cfg.objective == "edm"
     assert model.sigma_data == ckpt["sigma_data"] != 1.0
 
 
@@ -111,41 +111,9 @@ def test_validation_noise_is_fixed(data_root, tmp_path):
     from erosion_sim.train import train
 
     # With a learning rate of zero the model never changes, so fixed noise gives identical losses.
-    history = train(get_config("smoke", "diffusion"), data_root=data_root, show=False, out=tmp_path / "d.pt",
+    history = train(get_config("smoke", "edm"), data_root=data_root, show=False, out=tmp_path / "d",
                     lr=0.0, warmup_steps=0, steps=3, eval_every=1)
     assert history["val_loss"][0] == history["val_loss"][1] == history["val_loss"][2]
-
-
-def test_diffusion_resume_matches_an_uninterrupted_run(data_root, tmp_path, monkeypatch):
-    import numpy as np
-    import pytest
-
-    import erosion_sim.train as train_module
-    from erosion_sim.config import get_config
-
-    args = dict(data_root=data_root, show=False, out=tmp_path / "diffusion-smoke.pt", steps=8, eval_every=4,
-                log_every=4)
-    full = train_module.train(get_config("smoke", "diffusion"), **args)
-
-    # Interrupt at the second evaluation (step 8), so the last checkpoint is from step 4.
-    evaluate, calls = train_module.evaluate_loss, []
-
-    def interrupted(*a, **k):
-        calls.append(1)
-        if len(calls) == 2:
-            raise KeyboardInterrupt
-        return evaluate(*a, **k)
-
-    monkeypatch.setattr(train_module, "evaluate_loss", interrupted)
-    with pytest.raises(KeyboardInterrupt):
-        train_module.train(get_config("smoke", "diffusion"), **args)
-    monkeypatch.setattr(train_module, "evaluate_loss", evaluate)
-
-    # Training noise depends only on (seed, step), so the resumed run matches exactly.
-    resumed = train_module.train(get_config("smoke", "diffusion"), **args, resume=True)
-    assert resumed["eval_step"] == full["eval_step"] == [4, 8]
-    np.testing.assert_allclose(resumed["train_loss"], full["train_loss"], rtol=1e-5)
-    np.testing.assert_allclose(resumed["val_loss"], full["val_loss"], rtol=1e-5)
 
 
 class GaussianDenoiser(Denoiser):
@@ -207,8 +175,8 @@ def test_predict_and_rollout_with_a_diffusion_model(data_root, tmp_path):
     from erosion_sim.predict import predict, rollout
     from erosion_sim.train import load_checkpoint, train
 
-    out = tmp_path / "diffusion-smoke.pt"
-    train(get_config("smoke", "diffusion"), data_root=data_root, show=False, out=out)
+    out = tmp_path / "edm-smoke"
+    train(get_config("smoke", "edm"), data_root=data_root, show=False, out=out)
     model, scaling, _, _ = load_checkpoint(out, device="cpu")
     val = Split(data_root / "val")
     params, z0 = val.columns, val.snapshots[0, 0].astype(np.float64)

@@ -74,12 +74,12 @@ def predict_pairs(checkpoints: Path | dict[str, Path], split: str = "val", count
     if not isinstance(checkpoints, dict):
         checkpoints = {"model": checkpoints}
     loaded = {name: load_checkpoint(path) for name, path in checkpoints.items()}
-    if len({(c.data_profile, c.runs, c.lags) for _, _, c, _ in loaded.values()}) > 1:
-        raise ValueError("checkpoints must share data_profile, runs and lags to be compared on the same pairs")
+    if len({(c.data_profile, c.data, c.lags) for _, _, c, _ in loaded.values()}) > 1:
+        raise ValueError("checkpoints must share data_profile, data and lags to be compared on the same pairs")
     _, scaling, cfg, _ = next(iter(loaded.values()))
     split_data = Split.open(cfg.data_profile, split, data_root)
     params = split_data.columns
-    data = ErosionPairs(split_data, scaling, runs=split_data.select(**dict(cfg.runs)), lags=cfg.lags)
+    data = ErosionPairs(split_data, scaling, runs=split_data.select(**dict(cfg.data)), lags=cfg.lags)
     picks = np.sort(np.random.default_rng(seed).choice(len(data), min(count, len(data)), replace=False))
     run, start, end = data.locate(picks)
     z_a = np.asarray(data.snapshots[run, start], dtype=np.float64)

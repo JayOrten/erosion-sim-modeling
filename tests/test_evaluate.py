@@ -15,7 +15,7 @@ def test_radial_power_spectrum():
 
 
 def test_accuracy_metrics(data_root, tmp_path):
-    ckpt = tmp_path / "regression-smoke.pt"
+    ckpt = tmp_path / "regression-smoke"
     train(PROFILES["smoke"], data_root=data_root, show=False, out=ckpt)
     pairs = predict_pairs(ckpt, count=10, data_root=data_root)
     assert pairs["methods"] == ["no change", "model"]
@@ -37,9 +37,9 @@ def test_regression_against_diffusion(data_root, tmp_path, monkeypatch):
 
     matplotlib.use("Agg")
     monkeypatch.setattr("matplotlib.pyplot.show", lambda: None)
-    reg, dif = tmp_path / "regression-smoke.pt", tmp_path / "diffusion-smoke.pt"
+    reg, dif = tmp_path / "regression-smoke", tmp_path / "edm-smoke"
     train(PROFILES["smoke"], data_root=data_root, show=False, out=reg)
-    train(get_config("smoke", "diffusion"), data_root=data_root, show=False, out=dif)
+    train(get_config("smoke", "edm"), data_root=data_root, show=False, out=dif)
     checkpoints = {"regression": reg, "diffusion": dif}
 
     pairs = predict_pairs(checkpoints, count=6, samples=3, steps=3, batch_size=4, data_root=data_root)
@@ -69,9 +69,9 @@ def test_regression_against_diffusion(data_root, tmp_path, monkeypatch):
 
 
 def test_step_sweep(data_root, tmp_path):
-    reg, dif = tmp_path / "regression-smoke.pt", tmp_path / "diffusion-smoke.pt"
+    reg, dif = tmp_path / "regression-smoke", tmp_path / "edm-smoke"
     train(PROFILES["smoke"], data_root=data_root, show=False, out=reg)
-    train(get_config("smoke", "diffusion"), data_root=data_root, show=False, out=dif)
+    train(get_config("smoke", "edm"), data_root=data_root, show=False, out=dif)
     sweep = step_sweep(dif, steps=(2, 4), regression=reg, count=4, samples=2, show=False, data_root=data_root)
     assert len(sweep["ms_per_sample"]) == 2 and (sweep["ms_per_sample"] > 0).all()
     assert all(np.isfinite(sweep[label]["rmse"]).all() for label in ("1 sample", "mean of 2"))

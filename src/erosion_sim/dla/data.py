@@ -24,6 +24,7 @@ import torch
 from torch.utils.data import Dataset
 
 from .. import table
+from ..config import Config
 from ..normalization import dla_conditioning
 from ..paths import data_root
 from .config import DataConfig
@@ -183,3 +184,20 @@ class DLAPairs(Dataset):
             "t": t,
             "steps": x,
         }
+
+
+def target_std(data: Dataset, count: int = 512, seed: int = 0) -> float:
+    """Standard deviation of the target ``y`` over ``count`` random items of ``data``."""
+    rng = np.random.default_rng(seed)
+    ys = [data[int(i)]["y"].numpy() for i in rng.choice(len(data), min(count, len(data)), replace=False)]
+    return float(np.std(np.stack(ys)))
+
+
+def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[DLAPairs, DLAPairs, float]:
+    """DLA training and validation pairs for ``cfg``, and ``sigma_data``, the standard deviation of the
+    training target. There is no fitted scaling: the conditioning ranges are fixed by the dataset."""
+    train_data, val_data = (DLASplit.open(cfg.data_profile, split, data_root) for split in ("train", "val"))
+    train_runs, val_runs = (data.select(**dict(cfg.data)) for data in (train_data, val_data))
+    train = DLAPairs(train_data, runs=train_runs, repeats=cfg.repeats, seed=cfg.seed, t_range=cfg.t_range)
+    val = DLAPairs(val_data, runs=val_runs, seed=cfg.seed, t_range=cfg.t_range)
+    return train, val, target_std(train, seed=cfg.seed)

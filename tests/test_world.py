@@ -11,7 +11,7 @@ from erosion_sim.world.world import World
 
 
 def level(name, seed):
-    cfg = replace(get_config("smoke", "diffusion"), fixed_edges=False, level=name, crop=16, block=2)
+    cfg = replace(get_config("smoke", "edm"), fixed_edges=False, level=name, crop=16, block=2)
     scaling = Scaling(ParameterScaling(low=(0.0,) * 5, high=(1.0,) * 5), ChangeScaling(coef=1.0, power=0.0))
     torch.manual_seed(seed)
     model = build_model(cfg).eval()

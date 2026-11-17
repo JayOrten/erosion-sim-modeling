@@ -26,7 +26,7 @@ def show_predictions(path: Path, count: int = 3, split: str = "val", data_root: 
     model, scaling, cfg, _ = load_checkpoint(path)
     split_data = Split.open(cfg.data_profile, split, data_root)
     params = split_data.columns
-    data = ErosionPairs(split_data, scaling, runs=split_data.select(**dict(cfg.runs)), lags=cfg.lags)
+    data = ErosionPairs(split_data, scaling, runs=split_data.select(**dict(cfg.data)), lags=cfg.lags)
     fig, axes = plt.subplots(count, 6, figsize=(19, 3.3 * count), layout="constrained", squeeze=False)
     for row, i in zip(axes, np.random.default_rng(seed).choice(len(data), count, replace=False)):
         item = data[int(i)]
@@ -65,7 +65,7 @@ def show_comparison(checkpoints: dict[str, Path], count: int = 3, split: str = "
     cfg = next(iter(loaded.values()))[2]
     split_data = Split.open(cfg.data_profile, split, data_root)
     params = split_data.columns
-    data = ErosionPairs(split_data, next(iter(loaded.values()))[1], runs=split_data.select(**dict(cfg.runs)),
+    data = ErosionPairs(split_data, next(iter(loaded.values()))[1], runs=split_data.select(**dict(cfg.data)),
                         lags=cfg.lags)
     picks = np.random.default_rng(seed).choice(len(data), count, replace=False)
     rows = []

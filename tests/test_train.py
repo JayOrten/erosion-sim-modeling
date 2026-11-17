@@ -1,19 +1,27 @@
+import json
 from dataclasses import replace
 
 import numpy as np
 import pytest
 import torch
 
+import erosion_sim.train as train_module
 from erosion_sim.config import PROFILES, get_config
+from erosion_sim.identity import config_from_json, config_hash, is_finished
 from erosion_sim.train import load_checkpoint, train
 
 
-def test_smoke_training_saves_a_loadable_checkpoint(data_root, tmp_path):
-    out = tmp_path / "regression-smoke.pt"
-    history = train(PROFILES["smoke"], data_root=data_root, show=False, out=out)
-    assert out.exists()
+def test_smoke_training_fills_the_model_folder(data_root, tmp_path):
+    out = tmp_path / "model"
+    history = train(PROFILES["smoke"], data_root=data_root, out=out)
+    assert history["folder"] == out
     assert len(history["val_loss"]) == 2
     assert all(torch.isfinite(torch.tensor(history["train_loss"])))
+    assert {p.name for p in out.iterdir()} == {"config.json", "best.pt", "last.pt", "history.json", "done.json"}
+    assert is_finished(out)
+    saved = json.loads((out / "config.json").read_text())
+    assert config_from_json(saved["config"]) == PROFILES["smoke"]
+    assert saved["hash"] == config_hash(PROFILES["smoke"]) and "commit" in saved
 
     model, scaling, cfg, ckpt = load_checkpoint(out, device="cpu")
     assert cfg == PROFILES["smoke"]
@@ -23,30 +31,22 @@ def test_smoke_training_saves_a_loadable_checkpoint(data_root, tmp_path):
         assert model(x, cond).shape == (2, 1, 16, 16)
 
 
-def test_epochs_early_stopping_and_last_checkpoint(data_root, tmp_path):
-    out = tmp_path / "regression-smoke.pt"
+def test_epochs_and_early_stopping(data_root, tmp_path):
     # One epoch of the fake dataset is 4 runs x 15 pairs / batch 4 = 15 steps.
-    history = train(PROFILES["smoke"], data_root=data_root, show=False, out=out, epochs=1.0, eval_every=5,
+    history = train(PROFILES["smoke"], data_root=data_root, out=tmp_path / "a", epochs=1.0, eval_every=5,
                     log_every=5)
     assert history["eval_step"][-1] == 15
     # With a learning rate of zero the validation loss never improves after the first evaluation.
-    history = train(PROFILES["smoke"], data_root=data_root, show=False, out=out, lr=0.0, warmup_steps=0,
+    history = train(PROFILES["smoke"], data_root=data_root, out=tmp_path / "b", lr=0.0, warmup_steps=0,
                     steps=20, eval_every=1, patience=2)
     assert history["eval_step"] == [1, 2, 3]
-    last = torch.load(tmp_path / "regression-smoke-last.pt", weights_only=False)
+    last = torch.load(tmp_path / "b" / "last.pt", weights_only=False)
     assert last["step"] == 3 and "optimizer" in last
+    assert is_finished(tmp_path / "b")
 
 
-
-def test_resume_continues_where_it_stopped(data_root, tmp_path, monkeypatch):
-    import pytest
-
-    import erosion_sim.train as train_module
-
-    args = dict(data_root=data_root, show=False, out=tmp_path / "regression-smoke.pt", steps=8, eval_every=4, log_every=4)
-    full = train(PROFILES["smoke"], **args)
-
-    # Interrupt at the second evaluation (step 8), so the last checkpoint is from step 4.
+def _interrupt_at_second_evaluation(monkeypatch) -> None:
+    """Make training die at its second evaluation, as a killed job would, after one save at the first."""
     evaluate, calls = train_module.evaluate_loss, []
 
     def interrupted(*a, **k):
@@ -56,47 +56,46 @@ def test_resume_continues_where_it_stopped(data_root, tmp_path, monkeypatch):
         return evaluate(*a, **k)
 
     monkeypatch.setattr(train_module, "evaluate_loss", interrupted)
-    with pytest.raises(KeyboardInterrupt):
-        train(PROFILES["smoke"], **args)
-    monkeypatch.setattr(train_module, "evaluate_loss", evaluate)
+
+
+@pytest.mark.parametrize("objective", ["regression", "edm"])
+def test_a_rerun_resumes_to_the_same_result(data_root, tmp_path, monkeypatch, objective):
+    cfg = get_config("smoke", objective)
+    args = dict(data_root=data_root, steps=8, eval_every=4, log_every=2)
+    full = train(cfg, out=tmp_path / "full", **args)
+
+    with monkeypatch.context() as m:
+        _interrupt_at_second_evaluation(m)
+        with pytest.raises(KeyboardInterrupt):
+            train(cfg, out=tmp_path / "split", **args)
+    assert not is_finished(tmp_path / "split")
+    assert torch.load(tmp_path / "split" / "last.pt", weights_only=False)["step"] == 4
 
     with pytest.raises(ValueError):
-        train(PROFILES["smoke"], **args, lr=1e-2, resume=True)
-    resumed = train(PROFILES["smoke"], **args, resume=True)
+        train(cfg, out=tmp_path / "split", **args, lr=1e-2)
+    resumed = train(cfg, out=tmp_path / "split", **args)
+    assert is_finished(tmp_path / "split")
     assert resumed["eval_step"] == full["eval_step"] == [4, 8]
     np.testing.assert_allclose(resumed["train_loss"], full["train_loss"], rtol=1e-5)
     np.testing.assert_allclose(resumed["val_loss"], full["val_loss"], rtol=1e-5)
+    a = torch.load(tmp_path / "full" / "best.pt", weights_only=False)["model"]
+    b = torch.load(tmp_path / "split" / "best.pt", weights_only=False)["model"]
+    for k in a:
+        torch.testing.assert_close(a[k], b[k], rtol=1e-5, atol=1e-6)
 
 
-def test_checkpoint_names_follow_the_objective():
-    from dataclasses import replace
-
-    import pytest
-
-    from erosion_sim.paths import checkpoint_path
-
-    assert checkpoint_path("smoke").name == "regression-smoke.pt"
-    assert checkpoint_path("smoke", "diffusion").name == "diffusion-smoke.pt"
+def test_unknown_settings_are_rejected():
+    for field, value in (("objective", "gan"), ("task", "fluid"), ("backbone", "mlp")):
+        with pytest.raises(ValueError):
+            replace(PROFILES["smoke"], **{field: value})
     with pytest.raises(ValueError):
-        replace(PROFILES["smoke"], objective="gan")
+        replace(PROFILES["smoke_dla"], fixed_edges=True)
 
 
-def test_checkpoint_without_objective_loads_as_regression(data_root, tmp_path):
-    out = tmp_path / "regression-smoke.pt"
-    train(PROFILES["smoke"], data_root=data_root, show=False, out=out)
-    ckpt = torch.load(out, weights_only=False)
-    del ckpt["config"]["objective"]
-    torch.save(ckpt, out)
-
-    _, _, cfg, _ = load_checkpoint(out, device="cpu")
-    assert cfg.objective == "regression"
-
-
-def test_free_edges_diffusion_trains_and_loads(data_root, tmp_path):
-    out = tmp_path / "diffusion-smoke.pt"
-    cfg = replace(get_config("smoke", "diffusion"), fixed_edges=False)
-    train(cfg, data_root=data_root, show=False, out=out)
-    model, _, loaded, ckpt = load_checkpoint(out, device="cpu")
+def test_free_edges_edm_trains_and_loads(data_root, tmp_path):
+    cfg = replace(get_config("smoke", "edm"), fixed_edges=False)
+    train(cfg, data_root=data_root, out=tmp_path / "m")
+    model, _, loaded, ckpt = load_checkpoint(tmp_path / "m", device="cpu")
     assert loaded == cfg
     assert model.sigma_data == ckpt["sigma_data"]
     assert not model.fixed_edges and not model.net.fixed_edges
@@ -104,11 +103,10 @@ def test_free_edges_diffusion_trains_and_loads(data_root, tmp_path):
 
 @pytest.mark.parametrize("level", ["coarse", "fine"])
 def test_world_levels_train_and_load(data_root, tmp_path, level):
-    out = tmp_path / f"diffusion-smoke-{level}.pt"
-    cfg = replace(get_config("smoke", "diffusion"), fixed_edges=False, level=level, crop=8, block=2)
-    history = train(cfg, data_root=data_root, show=False, out=out)
+    cfg = replace(get_config("smoke", "edm"), fixed_edges=False, level=level, crop=8, block=2)
+    history = train(cfg, data_root=data_root, out=tmp_path / "m")
     assert all(torch.isfinite(torch.tensor(history["train_loss"])))
-    model, _, loaded, _ = load_checkpoint(out, device="cpu")
+    model, _, loaded, _ = load_checkpoint(tmp_path / "m", device="cpu")
     assert loaded == cfg and model.net.stem.in_channels == cfg.in_channels + 1
     size = 8  # fine crops are 8²; coarse items are 16² runs as 2 × 2 means
     x = torch.rand(2, cfg.in_channels, size, size)
@@ -116,16 +114,28 @@ def test_world_levels_train_and_load(data_root, tmp_path, level):
         assert model(x, torch.rand(2, 5), torch.randn(2, 1, size, size), torch.tensor([1.0, 2.0])).shape == (2, 1, size, size)
 
 
+def test_dla_model_trains_and_loads(dla_root, tmp_path):
+    cfg = PROFILES["smoke_dla"]
+    history = train(cfg, data_root=dla_root, out=tmp_path / "m")
+    assert all(np.isfinite(history["train_loss"] + history["val_loss"]))
+    assert all(np.isfinite(history["val_skill"]))
+    model, scaling, loaded, ckpt = load_checkpoint(tmp_path / "m", device="cpu")
+    assert scaling is None and loaded == cfg and 0 < ckpt["sigma_data"] < 1
+    size = 48
+    with torch.no_grad():
+        out = model(torch.rand(2, 1, size, size), torch.rand(2, 2), torch.randn(2, 1, size, size), torch.tensor([1.0, 2.0]))
+    assert out.shape == (2, 1, size, size)
+
+
 def test_ema_is_saved_as_the_model_and_training_weights_kept_for_resuming(data_root, tmp_path):
-    out = tmp_path / "regression-smoke.pt"
-    train(PROFILES["smoke"], data_root=data_root, show=False, out=out)
-    last = torch.load(tmp_path / "regression-smoke-last.pt", weights_only=False)
+    train(PROFILES["smoke"], data_root=data_root, out=tmp_path / "a")
+    last = torch.load(tmp_path / "a" / "last.pt", weights_only=False)
     ema, trained = last["model"], last["train_model"]
     assert ema.keys() == trained.keys()
     assert any(not torch.equal(ema[k], trained[k]) for k in ema)
 
-    train(PROFILES["smoke"], data_root=data_root, show=False, out=out, ema_decay=None)
-    last = torch.load(tmp_path / "regression-smoke-last.pt", weights_only=False)
+    train(PROFILES["smoke"], data_root=data_root, out=tmp_path / "b", ema_decay=None)
+    last = torch.load(tmp_path / "b" / "last.pt", weights_only=False)
     assert "train_model" not in last
 
 

@@ -20,20 +20,21 @@ datagen/                 simulator and dataset generation (its own environment; 
 terrain/                 erosion_terrain: Terrain, the seeded starting terrain, shared by datagen and the world
 src/erosion_sim/
   paths.py               where datasets, checkpoints, and animations live
-  config.py              training profiles
+  config.py              training Config: task (erosion, dla), backbone, objective (regression, edm), data filters
+  identity.py            model identity: config hash, model folder, finished check
   table.py               run tables (runs.npz): load, select runs by column
   data.py                Split (one dataset split), training pairs
   normalization.py       every conversion to and from model units: terrain (fixed 64 m unit), erosion
                          parameters (to [0, 1]), height change (divided by its typical size)
   model.py               the U-Net
   diffusion.py           EDM denoiser, loss, sampler, seeded noise
-  train.py               training and load_checkpoint
+  train.py               training into a model folder, resume, load_checkpoint
   predict.py             predictions, batches, and chains of calls over time
   hydrology.py           drainage area and pits
   render.py              hillshade and 3D renders
   evaluate/              metrics, chained calls, sampler sweeps, timing, and plots
   dla/                   DLA simulator with sticking probability, datasets, training pairs (track A)
-  cli.py                 erosion-sim command: dla-generate
+  cli.py                 erosion-sim command: dla-generate, train
   world/                 infinite world (docs/plans/infinite-plan.md): World, levels, noise,
                          level datasets, evaluation, version comparison, and a browser viewer
 notebooks/
@@ -51,7 +52,8 @@ docs/
 tests/                   uv run pytest
 artifacts/               generated, gitignored; $EROSION_ARTIFACTS moves it
   data/<profile>/<split>/
-  checkpoints/<objective>-<profile>.pt
+  models/<profile>-<hash>/  one model: config.json, best.pt, last.pt, history.json, done.json
+  checkpoints/           models trained before identity.py, still read by world/
   animations/
 ```
 
@@ -88,8 +90,19 @@ Compute nodes have no internet access, so everything is installed on the login n
    compiles a small kernel, and runs both test suites, all offline. Output goes to
    `logs/check-<job>.out`.
 
-Jobs run with `uv run --no-sync`, so they use the installed environments as they are. After changing
-dependencies, run `uv sync` on the login node again.
+Jobs use the installed environments as they are. After changing dependencies, run `uv sync` on the
+login node again.
+
+Training one model:
+
+```sh
+EROSION_COMMIT=$(git rev-parse HEAD) sbatch slurm/train.sbatch <profile> [--set field=value ...]
+```
+
+The model goes to `$EROSION_ARTIFACTS/models/<profile>-<hash>/`, where the hash comes from the config
+(`identity.py`). If a job dies, submitting it again resumes from the last evaluation. Rerunning a
+finished model does nothing. With `EROSION_COMMIT` set, the job refuses
+to run if the repo has moved or `src/` has uncommitted changes.
 
 ## Use
 

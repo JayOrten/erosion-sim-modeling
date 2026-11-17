@@ -53,3 +53,15 @@ def data_root(tmp_path):
     write_fake_dataset(tmp_path / "data" / "train", seed=0)
     write_fake_dataset(tmp_path / "data" / "val", seed=1)
     return tmp_path / "data"
+
+
+@pytest.fixture(scope="session")
+def dla_root(tmp_path_factory):
+    """The dla_smoke dataset's train and val splits, generated once per test session."""
+    from erosion_sim.dla.config import PROFILES
+    from erosion_sim.dla.data import make_split
+
+    root = tmp_path_factory.mktemp("dla")
+    for split in ("train", "val"):
+        make_split(PROFILES["dla_smoke"], split, root / split)
+    return root

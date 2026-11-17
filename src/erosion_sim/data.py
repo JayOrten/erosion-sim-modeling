@@ -7,6 +7,7 @@ pair of snapshots from one sample: a start ``z_a``, a later ``z_b``, and the ela
 """
 
 import json
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,8 @@ from erosion_terrain import TERRAIN_FIELDS, Terrain
 from torch.utils.data import Dataset
 
 from . import table
-from .normalization import Scaling, terrain_to_model
+from .config import Config
+from .normalization import Scaling, change_rms, terrain_to_model
 from .paths import data_root
 
 EROSION_PARAMS = ("K_ref", "K", "D", "m", "U")
@@ -132,3 +134,30 @@ class ErosionPairs(Dataset):
             "start": a,
             "end": b,
         }
+
+
+def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[ErosionPairs, ErosionPairs, Scaling, float]:
+    """Erosion training and validation pairs for ``cfg``, the ``Scaling`` fitted on the training runs, and
+    ``sigma_data``, the RMS of the training target.
+
+    World levels use ``ErosionCoarse`` or ``ErosionCrops`` (``cfg.level``); the coarse level's change
+    scaling and ``sigma_data`` are measured on block means, as it sees them.
+    """
+    from .world.data import ErosionCoarse, ErosionCrops  # world.data imports this module
+
+    train_data, val_data = (Split.open(cfg.data_profile, split, data_root) for split in ("train", "val"))
+    train_runs, val_runs = (data.select(**dict(cfg.data)) for data in (train_data, val_data))
+    block = cfg.block if cfg.level == "coarse" else 1
+    snapshots, params, times = train_data.snapshots, train_data.columns, train_data.times
+    scaling = Scaling.fit(snapshots, params, train_runs, times, block=block)
+    sigma_data = change_rms(snapshots, params, train_runs, times, scaling.change, block=block)
+    if cfg.level == "coarse":
+        make = partial(ErosionCoarse, block=cfg.block, crop=cfg.coarse_crop, margin=cfg.margin, seed=cfg.seed)
+    elif cfg.level == "fine":
+        make = partial(ErosionCrops, crop=cfg.crop, block=cfg.block, margin=cfg.margin, seed=cfg.seed)
+    else:
+        make = ErosionPairs
+    extra = {"repeats": cfg.repeats} if cfg.level else {}
+    train = make(train_data, scaling, runs=train_runs, lags=cfg.lags, **extra)
+    val = make(val_data, scaling, runs=val_runs, lags=cfg.lags)
+    return train, val, scaling, sigma_data

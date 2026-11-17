@@ -8,7 +8,7 @@ from erosion_sim.train import load_checkpoint, train
 
 
 def test_rollout_and_gif(data_root, tmp_path):
-    ckpt = tmp_path / "regression-smoke.pt"
+    ckpt = tmp_path / "regression-smoke"
     train(PROFILES["smoke"], data_root=data_root, show=False, out=ckpt)
     model, scaling, _, _ = load_checkpoint(ckpt, device="cpu")
     val = Split(data_root / "val")
