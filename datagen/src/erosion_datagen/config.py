@@ -1,10 +1,12 @@
 """Dataset profiles: simulator settings, parameter ranges, and run counts."""
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
-# Datasets go in the main repo's artifacts/ folder, where the training code reads them.
-ARTIFACTS_DIR = Path(__file__).resolve().parents[3] / "artifacts"
+# Datasets go where the training code reads them: $EROSION_ARTIFACTS if set, else the main repo's
+# artifacts/ folder. Same rule as erosion_sim.paths, which this environment cannot import.
+ARTIFACTS_DIR = Path(os.environ.get("EROSION_ARTIFACTS") or Path(__file__).resolve().parents[3] / "artifacts")
 
 
 @dataclass(frozen=True)

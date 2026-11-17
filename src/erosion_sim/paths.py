@@ -1,16 +1,18 @@
 """Where datasets, checkpoints, and animations live.
 
-Everything generated goes under ``artifacts/``, which is gitignored:
+Everything generated goes under one root folder: ``$EROSION_ARTIFACTS`` if set, else the repo's
+``artifacts/``, which is gitignored. On the cluster, the variable points at large shared storage.
 
 - ``artifacts/data/<profile>/<split>/``: datasets from ``datagen/``.
 - ``artifacts/checkpoints/<objective>-<profile>.pt``: trained models, plus ``-last.pt`` for resuming.
 - ``artifacts/animations/``: GIFs.
 """
 
+import os
 from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parents[2]
-ARTIFACTS_DIR = REPO_DIR / "artifacts"
+ARTIFACTS_DIR = Path(os.environ.get("EROSION_ARTIFACTS") or REPO_DIR / "artifacts")
 DATA_DIR = ARTIFACTS_DIR / "data"
 CHECKPOINTS_DIR = ARTIFACTS_DIR / "checkpoints"
 ANIMATIONS_DIR = ARTIFACTS_DIR / "animations"

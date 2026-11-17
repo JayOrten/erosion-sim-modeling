@@ -39,11 +39,14 @@ notebooks/
   world/                 world.ipynb: evaluate one version of the infinite world in detail;
                          compare.ipynb: rank versions on world_master test samples;
                          data.ipynb, train.ipynb: generate any datagen profile, train any profiles
+slurm/                   Slurm batch scripts; submit from the repo root
+logs/                    Slurm job output, gitignored
+archive/                 notebooks and configs of past runs, kept for reference; not run or tested
 docs/
   plans/                 numbered plans, one per line of work
   notes/                 measurements and findings
 tests/                   uv run pytest
-artifacts/               generated, gitignored
+artifacts/               generated, gitignored; $EROSION_ARTIFACTS moves it
   data/<profile>/<split>/
   checkpoints/<objective>-<profile>.pt
   animations/
@@ -60,6 +63,30 @@ The simulator needs its own environment, because `richdem` needs Python 3.10 or 
 ```sh
 cd datagen && uv sync
 ```
+
+Everything generated goes under `artifacts/` in the repo, or under `$EROSION_ARTIFACTS` if it is set.
+Both packages follow the same rule.
+
+### Cluster
+
+Compute nodes have no internet access, so everything is installed on the login node first.
+
+1. On the login node, clone the repo and run both `uv sync` commands above. This also downloads the
+   Python versions uv needs.
+2. Set these in your shell profile on the cluster. Jobs inherit them from the shell that submits them.
+
+   ```sh
+   export EROSION_ARTIFACTS=/path/to/large/storage/erosion  # data, checkpoints, results
+   export SBATCH_PARTITION=...                                # sbatch reads these two itself
+   export SBATCH_ACCOUNT=...
+   ```
+
+3. From the repo root, run `sbatch slurm/check.sbatch`. It prints the GPU, torch, and CUDA versions,
+   compiles a small kernel, and runs both test suites, all offline. Output goes to
+   `logs/check-<job>.out`.
+
+Jobs run with `uv run --no-sync`, so they use the installed environments as they are. After changing
+dependencies, run `uv sync` on the login node again.
 
 ## Use
 
