@@ -33,11 +33,16 @@ src/erosion_sim/
   hydrology.py           drainage area and pits
   render.py              hillshade and 3D renders
   evaluate/              metrics, chained calls, sampler sweeps, timing, and plots
-  dla/                   DLA simulator with sticking probability, datasets, training pairs (track A)
-  cli.py                 erosion-sim command: dla-generate, train
+  dla/                   DLA (track A): simulator with sticking probability, datasets, training pairs,
+                         sampling, metrics, evaluation suite, plots
+  results.py             results folders: write_results, read_results
+  experiments.py         experiment registry: one entry per experiment, its models and suite
+  runner.py              train, evaluate, or submit a registry entry
+  cli.py                 erosion-sim command: list, submit, train, evaluate, dla-generate
   world/                 infinite world (docs/plans/infinite-plan.md): World, levels, noise,
                          level datasets, evaluation, version comparison, and a browser viewer
 notebooks/
+  experiments/           one notebook per experiment, reading its results folder; summary.ipynb
   datagen/               browse, demo, landlab-demo, parameter-ranges; kernel: datagen/.venv
   chunk/                 dataset, train, evaluate: the single-window work
   world/                 world.ipynb: evaluate one version of the infinite world in detail;
@@ -53,6 +58,7 @@ tests/                   uv run pytest
 artifacts/               generated, gitignored; $EROSION_ARTIFACTS moves it
   data/<profile>/<split>/
   models/<profile>-<hash>/  one model: config.json, best.pt, last.pt, history.json, done.json
+  results/<name>/        one evaluation: results.json, arrays.npz, examples.npz, manifest.json
   checkpoints/           models trained before identity.py, still read by world/
   animations/
 ```
@@ -106,29 +112,22 @@ to run if the repo has moved or `src/` has uncommitted changes.
 
 ## Use
 
-1. Generate data: `notebooks/world/data.ipynb`, for any datagen profile. Datasets go to
-   `artifacts/data/<profile>/<split>/`. Open one with `Split.open(profile, split)`
-   (`from erosion_sim.data import Split`): its snapshots, times, and for each sample its erosion
-   parameters (`erosion(i)`) and starting terrain (`terrain(i)`).
-2. Train: `notebooks/chunk/train.ipynb`, or in Python:
+Every experiment in `docs/plans/experiments-plan.md` is an entry in `src/erosion_sim/experiments.py`:
+its models (configs) and the evaluation suite that scores them.
 
-   ```python
-   from erosion_sim.config import get_config
-   from erosion_sim.train import train
+1. Data. DLA: `uv run erosion-sim dla-generate dla_master`, locally (a few minutes), then copy
+   `artifacts/data/dla_master/` to the cluster. Erosion: datagen jobs (implementation plan, step 8).
+2. Commit, then on the login node: `erosion-sim submit A1`. It submits one training job per model that is
+   not yet trained or queued, and one evaluation job that waits for them. `--dry-run` prints the
+   `sbatch` commands only. `erosion-sim list` shows every experiment and the state of its models.
+3. Read: `notebooks/experiments/A1.ipynb` loads `artifacts/results/A1/` and draws the tables and
+   figures. `summary.ipynb` lists every result. Notebooks never train or sample.
 
-   train(get_config("fixed_dt", "diffusion"))  # saves artifacts/checkpoints/diffusion-fixed_dt.pt
-   ```
+Without Slurm, the same steps run directly: `erosion-sim train A1 base`, then
+`erosion-sim evaluate A1` (`--allow-dirty` for a trial run with uncommitted changes).
 
-3. Evaluate: `notebooks/chunk/evaluate.ipynb`. Every evaluation function is in `erosion_sim.evaluate`.
-
-For the infinite world, train the profiles `world_coarse` and `world_fine` (diffusion), then:
-
-- `notebooks/world/world.ipynb` evaluates it.
-- `notebooks/world/compare.ipynb` grades every version side by side on the same large simulator runs:
-  test samples of the `world_master` dataset. Add a version with one line in its `VERSIONS`.
-- `uv run python -m erosion_sim.world.viewer` serves a browser page to pan and zoom over it.
-- In Python: `World.load(seed=1, dT=30_000).get(y0, x0, h, w)` returns eroded heights in m
-  (`from erosion_sim.world.world import World`).
+The infinite world code (`world/`) still reads models trained before this setup; the implementation
+plan, step 11, moves it over.
 
 ## Tests
 

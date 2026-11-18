@@ -5,6 +5,7 @@ Everything generated goes under one root folder: ``$EROSION_ARTIFACTS`` if set, 
 
 - ``artifacts/data/<profile>/<split>/``: datasets from ``datagen/``.
 - ``artifacts/models/<profile>-<hash>/``: one trained model per folder (``identity.model_dir``).
+- ``artifacts/results/<name>/``: one evaluation per folder (``results.py``).
 - ``artifacts/checkpoints/<objective>-<profile>.pt``: models trained before that, still read by ``world/``.
 - ``artifacts/animations/``: GIFs.
 """
@@ -17,6 +18,7 @@ ARTIFACTS_DIR = Path(os.environ.get("EROSION_ARTIFACTS") or REPO_DIR / "artifact
 DATA_DIR = ARTIFACTS_DIR / "data"
 CHECKPOINTS_DIR = ARTIFACTS_DIR / "checkpoints"  # models trained before identity.py; used by world/
 MODELS_DIR = ARTIFACTS_DIR / "models"
+RESULTS_DIR = ARTIFACTS_DIR / "results"
 ANIMATIONS_DIR = ARTIFACTS_DIR / "animations"
 DATAGEN_DIR = REPO_DIR / "datagen"
 

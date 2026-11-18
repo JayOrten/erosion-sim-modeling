@@ -171,21 +171,29 @@ an uninterrupted run. Done locally; the cluster run waits until the cluster is a
 Score a trained DLA model on every DLA metric, and save the result to disk.
 
 - `results.py`. One folder per experiment holds:
-  - `results.json`: scalars, keyed by model and test condition.
-  - `arrays.npz`: curves and binned values.
-  - `examples.npz`: a few inputs, samples, and simulator outputs for figures.
-  - `manifest.json`: the model names and hashes, the test selection, the git commit (refused if the
-    working tree has uncommitted changes to `src/`), the Slurm job ID, and the time.
-- `dla/metrics.py`:
-  - Particle count.
-  - Connectivity: the fraction of samples forming one connected cluster.
-  - Containment: the fraction of start cells kept.
-  - Fractal dimension and radius of gyration, as distributions against the simulator's.
-  - Copied and adapted from `../seeded-pa-vae/src/dla/evaluate.py` where it already has them.
-- `dla/suite.py`: runs every metric for one experiment's models and test selection, and writes the
-  results folder. Plot functions read the folder. They never recompute.
-- `erosion-sim evaluate <experiment>` runs the track's suite. `slurm/evaluate.sbatch` runs it on one
-  GPU.
+  - `results.json`: scalars, keyed by model, test condition, and metric.
+  - `arrays.npz`: curves and per-sample values, keyed `<model>/<condition>/<metric>`.
+  - `examples.npz`: a few start clusters, samples, and simulator outputs for figures.
+  - `manifest.json`: the model folders and hashes, the test data, the conditions, the suite settings,
+    the git commit, the Slurm job ID, and the time. Writing refuses if `src/` has uncommitted changes,
+    unless `allow_dirty` is set for a trial run.
+- `dla/sample.py`: `grow` adds `x` particles to start clusters with a model, decoding at 0.5. The noise
+  key per sample is `(seed, condition, index)`, the same for every model.
+- `dla/metrics.py`, one value per cluster, compared as distributions (model and simulator mean and
+  standard deviation, and the 1-Wasserstein distance):
+  - particle count;
+  - connectivity: the fraction of cells joined to the seed;
+  - start kept: the fraction of start cells still occupied;
+  - radius of gyration;
+  - mass dimension, from cells within radius `r` of the seed;
+  - radial density profile, as a curve.
+- `dla/suite.py`: every metric for some models on every test condition (each fixed `p` from the seed
+  particle, each shared start), plus seconds per sample, written as a results folder.
+- `dla/plots.py`: metric per condition, example clusters, radial density. They read the folder only.
+- `erosion-sim evaluate <profile>` runs the suite on one finished model. `slurm/evaluate.sbatch` runs
+  it on one GPU. Step 6 switches it to experiment names.
+- Not yet in the suite: branch and tree statistics, where growth lands, agreement across steps
+  (A6), and the step sweep (A4). They are added with their experiments in step 6.
 
 Check-in: the DLA suite on the smoke model, its results folder, and the plots drawn from it.
 
@@ -193,28 +201,29 @@ Check-in: the DLA suite on the smoke model, its results folder, and the plots dr
 
 Run an experiment with one command, and view it in one notebook.
 
-- `experiments.py`: one entry per experiment, written to match its entry in `experiments-plan.md`:
-  - name, track, phase;
-  - models: label and config for each;
-  - test selection and suite settings (sampler steps, `p` grid, `x` values, and so on);
-  - for track C, world settings.
-- `erosion-sim submit <experiment>`:
-  - submits one `train.sbatch` job for each model not yet finished;
-  - submits `evaluate.sbatch` with a dependency on those jobs (`--dependency=afterok`);
-  - prints the job IDs. `--dry-run` prints the jobs without submitting.
-  - Skips finished models. A model already queued or running, for example from another experiment, is
-    found by job name (the model hash) with `squeue`, and waited on instead of trained twice.
-  - Refuses to run if `src/` has uncommitted changes.
+- `experiments.py`: one entry per experiment: name, title, question, models (label -> `Config`), suite,
+  and suite settings. Registered: A1, A5, A6, and two smoke experiments. A5 and A6 name A1's model as
+  "the best so far"; the entry changes when A2 to A4 pick another. A2 to A4 are registered in step 7.
+- `dla/suite.py` gains the agreement suite for A6: containment between jump sizes from one start and one
+  noise field, and chaining (1, 2, 4 jumps) against the simulator. Jumps are fractions of the particles
+  left after the start, so the same settings work on the smoke data.
+- `runner.py`: `train_model`, `evaluate`, and `submit`. `submit`:
+  - submits one `train.sbatch` job per model not yet finished, named `train-<hash>`, logging to the
+    model folder;
+  - waits on a model already queued under that name, from any experiment, instead of training it twice;
+  - submits `evaluate.sbatch` with `--dependency=afterok:<jobs>`, logging to the results folder, unless
+    the results exist;
+  - passes `EROSION_COMMIT` to every job, and refuses if `src/` has uncommitted changes. `--dry-run`
+    prints the commands.
 - A failed training job leaves evaluation pending. Running `submit` again resubmits only what is
   missing.
-- `notebooks/experiments/<name>.ipynb`: loads the results folder, shows the tables and plots, and
-  holds the written conclusion. No training or simulation inside.
-- `notebooks/experiments/summary.ipynb`: every `results.json` in one table.
-- A smoke entry for each track, used by the tests and for checking the cluster setup.
+- `erosion-sim list | submit | train <experiment> <model> | evaluate <experiment>`.
+- `notebooks/experiments/<name>.ipynb`: loads the results folder, shows the tables, plots, and training
+  curves, and holds the written conclusion. `summary.ipynb`: every results folder in one list.
 
-Check-in: A1 at smoke size submitted from the login node, trained, scored, and shown in its notebook.
-Then A1 for real, which also gives the timed run that sets the phase 1 budget (`experiments-plan.md`,
-step 4).
+Check-in: the smoke experiments trained and evaluated through the command line, `submit` checked with a
+fake Slurm, and every notebook run against the smoke results. Then A1 for real, which also gives the
+timed run that sets the phase 1 budget (`experiments-plan.md`, step 4).
 
 ### 7. Flow matching and DiT
 
@@ -225,6 +234,7 @@ Add the second objective and the second backbone, which A2, A3, B2, and B3 need.
 - DiT: patch embedding, 2D RoPE, AdaLN conditioning. Sizes S and L from `experiments-plan.md`.
 - Both work for DLA and erosion, and for any input channel count.
 - Smoke tests for every task, backbone, and objective combination.
+- Register A2, A3, and A4, with their notebooks. A4 runs the DLA suite once per step count.
 
 Check-in: the smoke tests, and the parameter counts against the plan's.
 

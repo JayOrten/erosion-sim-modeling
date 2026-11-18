@@ -1,6 +1,7 @@
 #!/bin/bash
 # Train one model on one GPU. Submit from the repo root:
-#   EROSION_COMMIT=$(git rev-parse HEAD) sbatch slurm/train.sbatch <profile> [--set field=value ...]
+#   erosion-sim submit <experiment>      (submits every job an experiment needs), or by hand:
+#   EROSION_COMMIT=$(git rev-parse HEAD) sbatch slurm/train.sbatch <experiment> <model>
 # EROSION_COMMIT is optional; when set, the job refuses to run if the repo has moved since submission.
 # Partition and account come from SBATCH_PARTITION and SBATCH_ACCOUNT.
 # If a job dies, submitting it again resumes from the model's last.pt.

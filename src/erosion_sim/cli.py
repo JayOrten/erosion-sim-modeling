@@ -1,29 +1,19 @@
-"""Command-line entry point, ``erosion-sim``. Each subcommand runs one stage, for use from Slurm jobs.
+"""Command-line entry point, ``erosion-sim``. Each subcommand runs one stage; the Slurm scripts call them.
 
+- ``erosion-sim list``: the registered experiments (``experiments.py``) and their models.
+- ``erosion-sim submit <experiment> [--dry-run] [--force-evaluate]``: from the login node, submit the
+  experiment's training jobs and its evaluation job (``runner.submit``).
+- ``erosion-sim train <experiment> <model>``: train one model of an experiment, resuming if it was
+  interrupted. Does nothing if it is finished.
+- ``erosion-sim evaluate <experiment> [--allow-dirty]``: run the experiment's suite, writing
+  ``artifacts/results/<experiment>/``.
 - ``erosion-sim dla-generate <profile> [split ...]``: simulate DLA splits (``dla/data.py``). Runs
   locally; the DLA data is small and fast.
-- ``erosion-sim train <profile> [--set field=value ...]``: train one model in its model folder
-  (``identity.model_dir``), resuming if it was interrupted. Does nothing if the model is finished.
-
-Evaluation and submission are added in later steps (docs/plans/implementation-plan.md).
 """
 
 import argparse
-import ast
 import os
 import sys
-from dataclasses import replace
-
-
-def _dla_generate(args) -> None:
-    from .dla.config import PROFILES, SPLITS
-    from .dla.data import make_split
-
-    cfg = PROFILES[args.profile]
-    for split in args.splits or SPLITS:
-        print(f"{cfg.profile}/{split}: {cfg.runs(split):,} runs", flush=True)
-        path = make_split(cfg, split, progress_every=args.progress_every)
-        print(f"wrote {path}", flush=True)
 
 
 def check_commit() -> None:
@@ -40,51 +30,80 @@ def check_commit() -> None:
                  f"{' with uncommitted changes in src/' if state['dirty'] else ''}. Commit and resubmit.")
 
 
-def parse_overrides(items: list[str]) -> dict:
-    """``["steps=500", "lr=1e-3", "data=(('fractal', 'fbm'),)"]`` as a dict. Values are Python literals;
-    anything else is kept as a string."""
-    overrides = {}
-    for item in items:
-        name, sep, value = item.partition("=")
-        if not sep:
-            raise SystemExit(f"--set takes field=value, got {item!r}")
-        try:
-            overrides[name] = ast.literal_eval(value)
-        except (ValueError, SyntaxError):
-            overrides[name] = value
-    return overrides
+def _list(args) -> None:
+    from .experiments import EXPERIMENTS
+    from .identity import is_finished, model_dir
+    from .results import results_dir
+
+    for name, exp in EXPERIMENTS.items():
+        done = (results_dir(name) / "manifest.json").exists()
+        print(f"{name:<20} {exp.title}  [{exp.suite}]{'  results' if done else ''}")
+        for label, cfg in exp.models.items():
+            folder = model_dir(cfg)
+            state = "trained" if is_finished(folder) else ("started" if folder.exists() else "")
+            print(f"    {label:<16} {folder.name:<32} {state}")
+
+
+def _submit(args) -> None:
+    from .runner import submit
+
+    submit(args.experiment, dry_run=args.dry_run, force_evaluate=args.force_evaluate)
 
 
 def _train(args) -> None:
-    from .config import PROFILES
-    from .identity import is_finished, model_dir
-    from .train import train
+    from .runner import train_model
 
     check_commit()
-    cfg = replace(PROFILES[args.profile], **parse_overrides(args.set))
-    folder = model_dir(cfg)
-    if is_finished(folder):
-        print(f"{folder} is already trained", flush=True)
-        return
-    train(cfg, out=folder)
-    print(f"finished: {folder}", flush=True)
+    print(f"finished: {train_model(args.experiment, args.model)}", flush=True)
+
+
+def _evaluate(args) -> None:
+    from .runner import evaluate
+
+    check_commit()
+    print(f"wrote {evaluate(args.experiment, allow_dirty=args.allow_dirty)}", flush=True)
+
+
+def _dla_generate(args) -> None:
+    from .dla.config import PROFILES, SPLITS
+    from .dla.data import make_split
+
+    cfg = PROFILES[args.profile]
+    for split in args.splits or SPLITS:
+        print(f"{cfg.profile}/{split}: {cfg.runs(split):,} runs", flush=True)
+        path = make_split(cfg, split, progress_every=args.progress_every)
+        print(f"wrote {path}", flush=True)
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="erosion-sim")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    listing = commands.add_parser("list", help="registered experiments and the state of their models")
+    listing.set_defaults(run=_list)
+
+    submit = commands.add_parser("submit", help="submit an experiment's training and evaluation jobs")
+    submit.add_argument("experiment")
+    submit.add_argument("--dry-run", action="store_true", help="print the sbatch commands without running them")
+    submit.add_argument("--force-evaluate", action="store_true", help="redo the evaluation if results exist")
+    submit.set_defaults(run=_submit)
+
+    train = commands.add_parser("train", help="train one model of an experiment, resuming if interrupted")
+    train.add_argument("experiment")
+    train.add_argument("model", help="the model's label in the experiment")
+    train.set_defaults(run=_train)
+
+    evaluate = commands.add_parser("evaluate", help="run an experiment's evaluation suite")
+    evaluate.add_argument("experiment")
+    evaluate.add_argument("--allow-dirty", action="store_true",
+                          help="write results even if src/ has uncommitted changes (trial runs)")
+    evaluate.set_defaults(run=_evaluate)
+
     dla = commands.add_parser("dla-generate", help="simulate DLA dataset splits")
     dla.add_argument("profile", help="a profile in erosion_sim.dla.config.PROFILES, e.g. dla_master")
     dla.add_argument("splits", nargs="*", help="train, val, test; none means all three")
     dla.add_argument("--progress-every", type=int, default=2_000)
     dla.set_defaults(run=_dla_generate)
-
-    train = commands.add_parser("train", help="train one model, resuming if interrupted")
-    train.add_argument("profile", help="a profile in erosion_sim.config.PROFILES")
-    train.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE",
-                       help="replace a config field, e.g. --set steps=500; repeatable")
-    train.set_defaults(run=_train)
 
     args = parser.parse_args(argv)
     args.run(args)
