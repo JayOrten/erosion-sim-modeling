@@ -163,3 +163,18 @@ class UNet(nn.Module):
 
 def count_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
+
+
+BACKBONES = ("unet", "dit")
+
+
+def build_backbone(backbone: str, cond_dim: int, in_channels: int, fixed_edges: bool, **kwargs) -> nn.Module:
+    """A ``UNet`` or a ``DiT`` (``dit.py``). Both map (x, cond) to a one-channel map. ``kwargs`` are the
+    chosen backbone's own settings."""
+    if backbone == "unet":
+        return UNet(cond_dim, in_channels=in_channels, fixed_edges=fixed_edges, **kwargs)
+    if backbone == "dit":
+        from .dit import DiT
+
+        return DiT(cond_dim, in_channels=in_channels, fixed_edges=fixed_edges, **kwargs)
+    raise ValueError(f"backbone must be one of {BACKBONES}, got {backbone!r}")

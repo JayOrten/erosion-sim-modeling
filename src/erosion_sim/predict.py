@@ -5,7 +5,8 @@ import torch
 from tqdm import tqdm
 
 from .normalization import Scaling, terrain_to_model
-from .diffusion import DEFAULT_STEPS, Denoiser, initial_noise, sample
+from .diffusion import DEFAULT_STEPS, initial_noise
+from .sampling import generate, is_generative
 
 
 @torch.no_grad()
@@ -25,9 +26,9 @@ def predict_batch(model, scaling: Scaling, z_a: np.ndarray, params: dict, runs, 
     n = len(z_a)
     runs = np.broadcast_to(np.asarray(runs, dtype=np.int64), (n,))
     dT = np.broadcast_to(np.asarray(dT, dtype=np.float64), (n,))
-    diffusion = isinstance(model, Denoiser)
-    if diffusion and (keys is None or len(keys) != n):
-        raise ValueError("a diffusion model needs one noise key per row")
+    generative = is_generative(model)
+    if generative and (keys is None or len(keys) != n):
+        raise ValueError("a generative model needs one noise key per row")
     device = next(model.parameters()).device
     autocast = torch.autocast(device.type, dtype=torch.bfloat16, enabled=bf16 and device.type == "cuda")
     inputs = terrain_to_model(z_a)
@@ -40,10 +41,8 @@ def predict_batch(model, scaling: Scaling, z_a: np.ndarray, params: dict, runs, 
         x = torch.as_tensor(inputs[rows], dtype=torch.float32, device=device)[:, None]
         c = torch.as_tensor(cond[rows], dtype=torch.float32, device=device)
         with autocast:
-            if diffusion:
-                y = sample(model, x, c, initial_noise(list(keys[rows]), z_a.shape[-2:], model.fixed_edges), steps)
-            else:
-                y = model(x, c)
+            noise = initial_noise(list(keys[rows]), z_a.shape[-2:], model.fixed_edges) if generative else None
+            y = generate(model, x, c, noise, steps)
         y = y.float()[:, 0].cpu().numpy()
         out[rows] = z_a[rows] + scaling.change.from_model(y, K_ref[rows, None, None], dT[rows, None, None])
         bar.update(len(y))
@@ -59,7 +58,7 @@ def predict(model, scaling: Scaling, z_a: np.ndarray, params: dict, run: int, dT
     (samples, H, W). Sample ``i`` uses the noise for key ``(seed, *key, i)``, so it is reproducible;
     ``steps`` is the number of sampler steps. Regression ignores those arguments.
     """
-    if isinstance(model, Denoiser):
+    if is_generative(model):
         keys = [(seed, *key, i) for i in range(samples)]
         return predict_batch(model, scaling, np.repeat(np.asarray(z_a)[None], samples, 0), params, run, dT,
                              keys, steps)

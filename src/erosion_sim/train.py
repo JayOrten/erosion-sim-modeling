@@ -1,4 +1,4 @@
-"""Train a model, save it in its model folder (``identity.py``), and load saved checkpoints."""
+"""Train a model into its folder (``paths.model_dir``), and load saved checkpoints."""
 
 import copy
 import json
@@ -13,17 +13,15 @@ import torch
 from torch.utils.data import DataLoader, Sampler, Subset
 
 from . import data as erosion_data
-from .config import Config
+from .config import NOT_TRAINING, Config, config_to_json
+from . import flow
 from .diffusion import VAL_SIGMAS, Denoiser, denoising_loss, step_generator, training_loss
 from .dla import data as dla_data
-from .identity import config_hash, model_dir, to_json
-from .model import UNet, count_parameters
+from .model import build_backbone, count_parameters
 from .normalization import Scaling
 from .paths import git_state
 
 
-# Config fields that may differ when resuming: they do not change what is trained.
-_RESUMABLE_CHANGES = {"num_workers", "compile", "log_every", "patience"}
 
 
 class _OrderSampler(Sampler):
@@ -49,13 +47,19 @@ def training_order(size: int, count: int, seed: int) -> np.ndarray:
     return np.concatenate(passes)[:count]
 
 
-def build_model(cfg: Config, sigma_data: float = 1.0) -> UNet | Denoiser:
-    """The U-Net for regression, or the U-Net inside an EDM denoiser."""
-    unet = dict(channels=cfg.channels, blocks=cfg.blocks, emb_dim=cfg.emb_dim, attention=cfg.attention,
-                fixed_edges=cfg.fixed_edges, in_channels=cfg.in_channels)
+def build_model(cfg: Config, sigma_data: float = 1.0) -> torch.nn.Module:
+    """The backbone alone for regression, or the backbone inside an EDM denoiser or a flow matching model."""
+    if cfg.backbone == "unet":
+        net = dict(channels=cfg.channels, blocks=cfg.blocks, emb_dim=cfg.emb_dim, attention=cfg.attention)
+    else:
+        net = dict(patch=cfg.patch, depth=cfg.dit_depth, width=cfg.dit_width, heads=cfg.dit_heads)
+    common = dict(sigma_data=sigma_data, fixed_edges=cfg.fixed_edges, in_channels=cfg.in_channels,
+                  backbone=cfg.backbone, **net)
     if cfg.objective == "edm":
-        return Denoiser(cfg.cond_dim, sigma_data=sigma_data, **unet)
-    return UNet(cfg.cond_dim, **unet)
+        return Denoiser(cfg.cond_dim, **common)
+    if cfg.objective == "flow_matching":
+        return flow.FlowModel(cfg.cond_dim, **common)
+    return build_backbone(cfg.backbone, cfg.cond_dim, cfg.in_channels, cfg.fixed_edges, **net)
 
 
 @torch.no_grad()
@@ -83,10 +87,12 @@ def evaluate_loss(model, loader, device, bf16, objective: str = "regression", se
     - Regression: ``val_loss`` is the MSE of the prediction.
     - EDM: ``val_loss`` is the EDM loss. Pair ``k`` is noised at ``VAL_SIGMAS[k % 8]``, with noise
       drawn from ``seed``, so every evaluation uses the same noise. Not comparable with regression.
+    - Flow matching: ``val_loss`` is the velocity MSE, pair ``k`` at time ``flow.VAL_TIMES[k % 8]``, with
+      fixed noise as for EDM.
 
     ``val_skill`` is ``1 - MSE / MSE(no change)``. No change is a zero target for erosion (the target is a
     change), and the input itself for DLA (``baseline_is_input``; the target is the later cluster). For EDM
-    it scores the denoised estimate at those noise levels, not a full sample.
+    and flow matching it scores the one-step estimate at those noise levels or times, not a full sample.
     """
     model.eval()
     sq_model = sq_zero = count = 0.0
@@ -100,6 +106,11 @@ def evaluate_loss(model, loader, device, bf16, objective: str = "regression", se
                 noise = torch.randn(y.shape, device=device, generator=generator)
                 loss, pred = denoising_loss(model, x, cond, y, levels * model.sigma_data, noise)
                 loss_sum += loss.sum().item()
+            elif objective == "flow_matching":
+                times = torch.tensor(flow.VAL_TIMES, device=device)[torch.arange(pairs, pairs + len(y), device=device) % len(flow.VAL_TIMES)]
+                noise = torch.randn(y.shape, device=device, generator=generator)
+                loss, pred = flow.flow_loss(model, x, cond, y, times, noise)
+                loss_sum += loss.sum().item()
             else:
                 pred = model(x, cond)
         sq_model += (pred.float() - y).pow(2).sum().item()
@@ -108,7 +119,7 @@ def evaluate_loss(model, loader, device, bf16, objective: str = "regression", se
         pairs += len(y)
     model.train()
     mse, mse_zero = sq_model / count, sq_zero / count
-    val_loss = loss_sum / pairs if objective == "edm" else mse
+    val_loss = mse if objective == "regression" else loss_sum / pairs
     return {"val_loss": val_loss, "val_skill": 1 - mse / mse_zero}
 
 
@@ -118,12 +129,11 @@ def _write_json(path: Path, value) -> None:
     tmp.replace(path)  # atomic, so an interruption never leaves a half-written file
 
 
-def train(cfg: Config, data_root: Path | None = None, show: bool = False, out: Path | None = None,
-          **overrides) -> dict:
-    """Train a model for ``cfg`` in its model folder, ``out`` (default ``identity.model_dir(cfg)``).
+def train(cfg: Config, out: Path, data_root: Path | None = None, show: bool = False, **overrides) -> dict:
+    """Train a model for ``cfg`` in the folder ``out``.
 
-    Writes ``config.json`` at the start, ``best.pt`` whenever the validation loss improves, ``last.pt`` and
-    ``history.json`` at every evaluation, and ``done.json`` at the end (see ``identity.py``).
+    Writes ``config.json`` (the config and git commit) at the start, ``best.pt`` whenever the validation
+    loss improves, ``last.pt`` and ``history.json`` at every evaluation, and ``done.json`` at the end.
 
     With ``cfg.ema_decay`` set, a second copy of the model keeps an exponential moving average (EMA) of
     the training weights. Validation, early stopping, and the saved ``"model"`` use the EMA copy; the last
@@ -131,7 +141,7 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = False, out: P
 
     If ``last.pt`` exists, training resumes from it: model, optimizer, learning-rate schedule, history,
     and position in the training order. The config must match the saved one, except for the fields in
-    ``_RESUMABLE_CHANGES``. A resumed run gives the same result as an uninterrupted one. So if a job dies,
+    ``config.NOT_TRAINING``. A resumed run gives the same result as an uninterrupted one. So if a job dies,
     submitting it again continues from the last evaluation.
 
     Stops early after ``cfg.patience`` evaluations without a better validation loss.
@@ -166,7 +176,7 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = False, out: P
     ema = copy.deepcopy(model).requires_grad_(False) if cfg.ema_decay is not None else None
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay, fused=use_cuda)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: _lr_factor(step, cfg))
-    out = Path(out) if out is not None else model_dir(cfg)
+    out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     best_path, last_path = out / "best.pt", out / "last.pt"
 
@@ -176,7 +186,7 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = False, out: P
     if last_path.exists():
         saved = torch.load(last_path, map_location=device, weights_only=False)
         saved_cfg = asdict(Config(**saved["config"]))  # fills fields added since the save with defaults
-        changed = {k for k, v in asdict(cfg).items() if saved_cfg[k] != v} - _RESUMABLE_CHANGES
+        changed = {k for k, v in asdict(cfg).items() if saved_cfg[k] != v} - NOT_TRAINING
         if changed:
             raise ValueError(f"config differs from {last_path} in {sorted(changed)}; cannot resume")
         model.load_state_dict(saved["train_model"] if ema is not None else saved["model"])
@@ -189,7 +199,7 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = False, out: P
         since_best = len(history["val_loss"]) - 1 - int(np.argmin(history["val_loss"])) if history["val_loss"] else 0
         print(f"resuming from {last_path} at step {done}", flush=True)
     else:
-        _write_json(out / "config.json", {"config": to_json(asdict(cfg)), "hash": config_hash(cfg), **git_state()})
+        _write_json(out / "config.json", {"config": config_to_json(cfg), **git_state()})
 
     order = training_order(len(train_data), cfg.steps * cfg.batch_size, cfg.seed)[done * cfg.batch_size:]
     train_loader = DataLoader(train_data, sampler=_OrderSampler(order), drop_last=True, **loader_args)
@@ -219,6 +229,8 @@ def train(cfg: Config, data_root: Path | None = None, show: bool = False, out: P
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=bf16):
             if cfg.objective == "edm":
                 loss = training_loss(step_model, x, cond, y, step_generator(cfg.seed, step, device))
+            elif cfg.objective == "flow_matching":
+                loss = flow.training_loss(step_model, x, cond, y, step_generator(cfg.seed, step, device))
             else:
                 loss = (step_model(x, cond).float() - y).pow(2).mean()
         opt.zero_grad(set_to_none=True)
@@ -270,17 +282,18 @@ def plot_history(history: dict) -> None:
     fig, (a, b) = plt.subplots(1, 2, figsize=(13, 4), layout="constrained")
     a.semilogy(history["step"], history["train_loss"], label="train")
     a.semilogy(history["eval_step"], history["val_loss"], "o-", label="validation")
-    edm = history.get("objective") == "edm"
-    a.set(xlabel="step", ylabel="EDM loss" if edm else "MSE of the target", title="loss")
+    objective = history.get("objective")
+    a.set(xlabel="step", title="loss",
+          ylabel={"edm": "EDM loss", "flow_matching": "velocity MSE"}.get(objective, "MSE of the target"))
     a.legend()
     b.plot(history["eval_step"], history["val_skill"], "o-")
     b.axhline(0, color="gray", lw=0.8)
     b.set(xlabel="step", ylabel="1 - MSE / MSE(no change)",
-          title="validation skill" + (" (one denoising step)" if edm else ""), ylim=(min(-0.1, *history["val_skill"]), 1))
+          title="validation skill" + (" (one-step estimate)" if objective != "regression" else ""), ylim=(min(-0.1, *history["val_skill"]), 1))
     plt.show()
 
 
-def load_checkpoint(path: Path, device: str | None = None) -> tuple[UNet | Denoiser, Scaling | None, Config, dict]:
+def load_checkpoint(path: Path, device: str | None = None) -> tuple[torch.nn.Module, Scaling | None, Config, dict]:
     """Return (model in eval mode, scaling, config, full checkpoint) from a model folder (its ``best.pt``)
     or a checkpoint file. ``scaling`` is None for DLA models."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")

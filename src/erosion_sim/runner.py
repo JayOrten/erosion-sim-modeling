@@ -4,29 +4,57 @@
 - ``evaluate(name)``: the experiment's suite on its trained models, into ``artifacts/results/<name>/``.
 - ``submit(name)``: one Slurm training job per model that is neither finished nor already queued, then
   one evaluation job that waits for them (``--dependency=afterok``).
+
+A model borrowed from another experiment (``experiments.Ref``) lives in, and is trained into, that
+experiment's folder. Before using a stored model, its ``config.json`` is checked against the registry: if
+the entry was edited after training, nothing runs until the old folder is removed or the edit undone.
 """
 
 import subprocess
 from pathlib import Path
 
+import json
+
 from . import experiments
-from .identity import config_hash, is_finished, model_dir
-from .paths import REPO_DIR, git_state
+from .config import Config, config_from_json, training_differences
+from .paths import REPO_DIR, git_state, is_finished, model_dir
 from .results import results_dir
 
 TRAIN_SCRIPT = "slurm/train.sbatch"
 EVALUATE_SCRIPT = "slurm/evaluate.sbatch"
 
 
+class ConfigChanged(RuntimeError):
+    """A stored model was trained with settings the registry no longer asks for."""
+
+
+def check_stored_config(folder: Path, cfg: Config) -> None:
+    """Raise ``ConfigChanged`` if ``folder`` holds a model whose ``config.json`` differs from ``cfg`` in a
+    field that changes training. A folder without ``config.json`` passes."""
+    path = Path(folder) / "config.json"
+    if not path.exists():
+        return
+    changed = training_differences(config_from_json(json.loads(path.read_text())["config"]), cfg)
+    if changed:
+        raise ConfigChanged(f"{folder} was trained with different {', '.join(changed)} than the registry now "
+                            "gives. Undo the edit, or delete the folder to train it again.")
+
+
+def model_folder(name: str, label: str, models_root: Path | None = None) -> tuple[Path, Config, str, str]:
+    """Model ``label`` of experiment ``name``: its folder, config, and owning experiment and label, after
+    checking any stored config against the registry."""
+    owner, owner_label, cfg = experiments.resolve(name, label)
+    folder = model_dir(owner, owner_label, models_root)
+    check_stored_config(folder, cfg)
+    return folder, cfg, owner, owner_label
+
+
 def train_model(name: str, label: str, data_root: Path | None = None, models_root: Path | None = None) -> Path:
-    """Train model ``label`` of experiment ``name``, resuming if interrupted. Returns its folder."""
+    """Train model ``label`` of experiment ``name`` (in its owner's folder), resuming if interrupted.
+    Returns its folder."""
     from .train import train
 
-    exp = experiments.get(name)
-    if label not in exp.models:
-        raise KeyError(f"{name} has no model {label!r}; models: {', '.join(exp.models)}")
-    cfg = exp.models[label]
-    folder = model_dir(cfg, models_root)
+    folder, cfg, _, _ = model_folder(name, label, models_root)
     if is_finished(folder):
         print(f"{folder} is already trained", flush=True)
         return folder
@@ -40,7 +68,7 @@ def evaluate(name: str, data_root: Path | None = None, models_root: Path | None 
     from .dla.suite import evaluate_agreement, evaluate_dla
 
     exp = experiments.get(name)
-    folders = {label: model_dir(cfg, models_root) for label, cfg in exp.models.items()}
+    folders = {label: model_folder(name, label, models_root)[0] for label in exp.models}
     missing = [label for label, folder in folders.items() if not is_finished(folder)]
     if missing:
         raise RuntimeError(f"{name}: models not trained yet: {', '.join(missing)}")
@@ -69,8 +97,9 @@ def queued_job(job_name: str, run=subprocess.run) -> str | None:
 def submit(name: str, dry_run: bool = False, force_evaluate: bool = False, run=subprocess.run) -> list[list[str]]:
     """Submit experiment ``name``: training jobs for missing models, then its evaluation job.
 
-    - Finished models are skipped. A model already queued or running (its job name is ``train-<hash>``,
-      from any experiment) is waited on, not trained twice.
+    - Finished models are skipped. A model already queued or running (job name ``train-<owner>-<label>``,
+      submitted by any experiment) is waited on, not trained twice. A model borrowed from another
+      experiment that is not trained yet is trained into that experiment's folder.
     - Each job gets ``EROSION_COMMIT``, so it refuses to run if the repo moves before it starts.
     - Logs go into the model folder and the results folder: ``slurm-<job>.out``.
     - Evaluation is skipped if the results already exist, unless ``force_evaluate``.
@@ -95,12 +124,12 @@ def submit(name: str, dry_run: bool = False, force_evaluate: bool = False, run=s
         print(f"  -> job {job}", flush=True)
         return job
 
-    for label, cfg in exp.models.items():
-        folder = model_dir(cfg)
+    for label in exp.models:
+        folder, _, owner, owner_label = model_folder(name, label)
         if is_finished(folder):
-            print(f"{label}: trained ({folder.name})", flush=True)
+            print(f"{label}: trained ({owner}/{owner_label})", flush=True)
             continue
-        job_name = f"train-{config_hash(cfg)}"
+        job_name = f"train-{owner}-{owner_label}"
         queued = None if dry_run else queued_job(job_name, run)
         if queued:
             print(f"{label}: already queued as job {queued}; waiting on it", flush=True)
@@ -109,7 +138,7 @@ def submit(name: str, dry_run: bool = False, force_evaluate: bool = False, run=s
         if not dry_run:
             folder.mkdir(parents=True, exist_ok=True)
         waits.append(sbatch([f"--job-name={job_name}", f"--output={folder}/slurm-%j.out", export,
-                             TRAIN_SCRIPT, name, label]))
+                             TRAIN_SCRIPT, owner, owner_label]))
 
     out = results_dir(name)
     if (out / "manifest.json").exists() and not force_evaluate:

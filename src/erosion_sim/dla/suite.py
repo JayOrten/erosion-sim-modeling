@@ -13,10 +13,14 @@ and for the simulator's runs, and summarized with ``metrics.compare``.
 
 Results layout:
 
-- scalars: ``[model][condition][metric]`` -> ``compare`` dict, plus ``[model]["seconds_per_sample"]``.
-- arrays: ``<model>/<condition>/<metric>`` per-sample values, ``simulator/<condition>/<metric>``, and
+Each scored (model, sampler steps) pair is an entry. Without a step sweep an entry is named by the model's
+label; with one (``Settings.step_sweep``, experiment A4) it is ``<label>@<steps>``. The manifest's
+``entries`` lists each entry's model, steps, and network calls per sample.
+
+- scalars: ``[entry][condition][metric]`` -> ``compare`` dict, plus ``[entry]["seconds_per_sample"]``.
+- arrays: ``<entry>/<condition>/<metric>`` per-sample values, ``simulator/<condition>/<metric>``, and
   ``.../radial_density`` curves with ``radial_edges``.
-- examples: ``<model>/<condition>`` and ``simulator/<condition>``: the first few clusters, uint8;
+- examples: ``<entry>/<condition>`` and ``simulator/<condition>``: the first few clusters, uint8;
   ``start/<condition>``: the start cluster.
 """
 
@@ -27,8 +31,8 @@ from pathlib import Path
 import numpy as np
 
 from ..diffusion import DEFAULT_STEPS
-from ..identity import config_hash
 from ..results import write_results
+from ..sampling import network_calls
 from ..train import load_checkpoint
 from . import metrics
 from .data import NO_START, DLASplit
@@ -44,6 +48,7 @@ class Settings:
     examples: int = 4  # clusters kept per condition for figures
     bf16: bool = True
     only: str | None = None  # score only conditions whose name starts with this, e.g. "p=" for A5
+    step_sweep: tuple[int, ...] | None = None  # score every model at each of these step counts (A4)
 
 
 @dataclass(frozen=True)
@@ -93,34 +98,39 @@ def evaluate_dla(models: dict[str, Path], out: Path, data_profile: str | None = 
         for name, metric in metrics.PER_CLUSTER.items():
             arrays[f"simulator/{cond.name}/{name}"] = metric(final, start)
 
+    entries = {}
     for label, (model, _, cfg, _) in loaded.items():
         if cfg.task != "dla":
             raise ValueError(f"{label} is a {cfg.task} model, not DLA")
-        scalars[label] = {}
-        seconds, count = 0.0, 0
-        for cond in conds:
-            final, start = simulated[cond.name]
-            p = test.columns["p"][cond.runs]
-            keys = [(settings.seed, cond.name, i) for i in range(len(cond.runs))]
-            begin = time.perf_counter()
-            samples = grow(model, start, p, cond.x, keys, p_range, particles, settings.steps, settings.batch_size,
-                           settings.bf16)
-            seconds += time.perf_counter() - begin
-            count += len(samples)
-            examples[f"{label}/{cond.name}"] = samples[: settings.examples]
-            arrays[f"{label}/{cond.name}/radial_density"] = metrics.radial_density(samples, edges)
-            scalars[label][cond.name] = {}
-            for name, metric in metrics.PER_CLUSTER.items():
-                values = metric(samples, start)
-                arrays[f"{label}/{cond.name}/{name}"] = values
-                scalars[label][cond.name][name] = metrics.compare(values, arrays[f"simulator/{cond.name}/{name}"])
-        scalars[label]["seconds_per_sample"] = seconds / max(count, 1)
+        for steps in settings.step_sweep or (settings.steps,):
+            entry = f"{label}@{steps}" if settings.step_sweep else label
+            entries[entry] = {"model": label, "steps": steps, "network_calls": network_calls(model, steps)}
+            scalars[entry] = {}
+            seconds, count = 0.0, 0
+            for cond in conds:
+                final, start = simulated[cond.name]
+                p = test.columns["p"][cond.runs]
+                keys = [(settings.seed, cond.name, i) for i in range(len(cond.runs))]
+                begin = time.perf_counter()
+                samples = grow(model, start, p, cond.x, keys, p_range, particles, steps, settings.batch_size,
+                               settings.bf16)
+                seconds += time.perf_counter() - begin
+                count += len(samples)
+                examples[f"{entry}/{cond.name}"] = samples[: settings.examples]
+                arrays[f"{entry}/{cond.name}/radial_density"] = metrics.radial_density(samples, edges)
+                scalars[entry][cond.name] = {}
+                for name, metric in metrics.PER_CLUSTER.items():
+                    values = metric(samples, start)
+                    arrays[f"{entry}/{cond.name}/{name}"] = values
+                    scalars[entry][cond.name][name] = metrics.compare(values, arrays[f"simulator/{cond.name}/{name}"])
+            scalars[entry]["seconds_per_sample"] = seconds / max(count, 1)
 
     manifest = {
         "suite": "dla",
-        "models": {label: {"folder": str(Path(folder).name), "hash": config_hash(loaded[label][2])}
+        "models": {label: {"folder": f"{Path(folder).parent.name}/{Path(folder).name}"}
                    for label, folder in models.items()},
         "test": {"data_profile": test.path.parent.name, "split": "test", "runs": len(test)},
+        "entries": entries,
         "conditions": [c.name for c in conds],
         "settings": asdict(settings),
     }
@@ -219,9 +229,11 @@ def evaluate_agreement(models: dict[str, Path], out: Path, data_profile: str | N
 
     manifest = {
         "suite": "dla_agreement",
-        "models": {label: {"folder": str(Path(folder).name), "hash": config_hash(loaded[label][2])}
+        "models": {label: {"folder": f"{Path(folder).parent.name}/{Path(folder).name}"}
                    for label, folder in models.items()},
         "test": {"data_profile": test.path.parent.name, "split": "test", "runs": len(test)},
+        "entries": {label: {"model": label, "steps": settings.steps,
+                            "network_calls": network_calls(loaded[label][0], settings.steps)} for label in models},
         "jumps": jumps,
         "settings": asdict(settings),
     }

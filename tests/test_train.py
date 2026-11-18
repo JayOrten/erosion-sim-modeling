@@ -7,7 +7,8 @@ import torch
 
 import erosion_sim.train as train_module
 from erosion_sim.config import PROFILES, get_config
-from erosion_sim.identity import config_from_json, config_hash, is_finished
+from erosion_sim.config import config_from_json, config_to_json, training_differences
+from erosion_sim.paths import is_finished
 from erosion_sim.train import load_checkpoint, train
 
 
@@ -21,7 +22,7 @@ def test_smoke_training_fills_the_model_folder(data_root, tmp_path):
     assert is_finished(out)
     saved = json.loads((out / "config.json").read_text())
     assert config_from_json(saved["config"]) == PROFILES["smoke"]
-    assert saved["hash"] == config_hash(PROFILES["smoke"]) and "commit" in saved
+    assert "commit" in saved and "dirty" in saved
 
     model, scaling, cfg, ckpt = load_checkpoint(out, device="cpu")
     assert cfg == PROFILES["smoke"]
@@ -146,3 +147,18 @@ def test_update_ema_moves_a_fraction_of_the_way():
     before = ema.weight.clone()
     update_ema(ema, model, decay=0.75)
     torch.testing.assert_close(ema.weight, before + 0.25 * (model.weight - before))
+
+
+def test_config_round_trips_through_json_and_reports_training_differences():
+    cfg = replace(PROFILES["smoke"], data=(("noise", frozenset({"perlin", "value_cubic"})), ("index", (0, 2667)),
+                                           ("U", 0.0)), lags=(1, 2))
+    assert config_from_json(json.loads(json.dumps(config_to_json(cfg)))) == cfg
+    as_range = replace(cfg, data=(("noise", ("perlin", "value_cubic")),))
+    assert config_from_json(config_to_json(as_range)) == as_range != replace(as_range, data=cfg.data)
+    stored = config_to_json(cfg)
+    stored.pop("dit_width")  # a field added after the model was trained takes its default
+    stored["removed_field"] = 1  # a field since removed is ignored
+    assert config_from_json(stored) == cfg
+    assert training_differences(cfg, replace(cfg, profile="other", num_workers=1, log_every=9)) == []
+    assert training_differences(cfg, replace(cfg, lr=1e-3, seed=2)) == ["lr", "seed"]
+

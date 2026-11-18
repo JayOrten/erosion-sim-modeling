@@ -14,7 +14,7 @@ later.
   - a world with any number of levels;
   - evaluation suites per track, and the baselines.
 - Restructured code: one config with task, backbone, objective, and data selection; models named by
-  config hash; one experiment registry; results written to disk. Old code moves to `archive/`.
+  experiment and label; one experiment registry; results written to disk. Old code moves to `archive/`.
 - Data generation and training run as Slurm jobs, through command-line entry points.
 - Notebooks only read saved results and plot them. One notebook per experiment.
 - Every result can be traced to its configs, data, git commit, and Slurm job.
@@ -36,7 +36,7 @@ src/erosion_sim/
   paths.py          artifacts root from EROSION_ARTIFACTS
   table.py          run table: load, select by column
   config.py         Config with task, backbone, objective, data selection; smoke profile only
-  identity.py       model name from a hash of its config
+  runner.py         train, evaluate, or submit a registry entry
   train.py          train(cfg), unchanged loop, new checkpoint location
   cli.py            erosion-sim: train, evaluate, submit
   experiments.py    registry: one entry per experiment, A1 to C9
@@ -58,7 +58,7 @@ Artifacts, under `$EROSION_ARTIFACTS` (the repo's `artifacts/` when unset):
 
 ```
 data/<dataset>/<group>/<split>/    runs.npz, snapshots.npy (or arrivals.npy for DLA), meta.json
-models/<name>-<hash>/              best.pt, last.pt, config.json, history.json, slurm-<job>.out
+models/<experiment>/<label>/       best.pt, last.pt, config.json, history.json, done.json, slurm-<job>.out
 results/<experiment>/              results.json, arrays.npz, examples.npz, manifest.json, slurm-<job>.out
 ```
 
@@ -135,7 +135,7 @@ Build the DLA simulator with a sticking probability, and generate `dla_master`.
 Check-in: the measurements, a grid of rendered clusters per `p`, and `dla_master` generated on the
 cluster.
 
-### 4. Model identity, training command, Slurm training
+### 4. Model folders, training command, Slurm training
 
 Train any model from the command line, as one Slurm job, with a checkpoint location that cannot
 collide.
@@ -148,10 +148,9 @@ collide.
   - `data`: the selection filters from step 2, replacing `runs`.
   - The erosion conditioning list (dropping `U`) and extra input channels move to step 10 and step 12,
     where the erosion recipe changes.
-- `identity.py`: a model's folder is `<profile>-<hash>`, the hash being the first 8 hex digits of the
-  SHA-256 of its config as canonical JSON. `profile`, `num_workers`, `log_every`, and `compile` are left
-  out of the hash. An existing folder with the same hash is reused under any label, so the plan's reuse
-  rule needs no bookkeeping.
+- Model folders: `models/<experiment>/<label>/`. `config.json` records the full config and the git
+  commit, so a model always says what it was trained with. (A first version named folders by a hash
+  of the config; it was dropped for plain names and explicit reuse, step 7.)
 - `train.py`: same loop. Saves `config.json` (with the git commit), `best.pt`, `last.pt`,
   `history.json`, and `done.json` in the model folder. Resumes from `last.pt` whenever it exists.
   Nothing plots during training.
@@ -174,7 +173,7 @@ Score a trained DLA model on every DLA metric, and save the result to disk.
   - `results.json`: scalars, keyed by model, test condition, and metric.
   - `arrays.npz`: curves and per-sample values, keyed `<model>/<condition>/<metric>`.
   - `examples.npz`: a few start clusters, samples, and simulator outputs for figures.
-  - `manifest.json`: the model folders and hashes, the test data, the conditions, the suite settings,
+  - `manifest.json`: the model folders, the test data, the conditions, the suite settings,
     the git commit, the Slurm job ID, and the time. Writing refuses if `src/` has uncommitted changes,
     unless `allow_dirty` is set for a trial run.
 - `dla/sample.py`: `grow` adds `x` particles to start clusters with a model, decoding at 0.5. The noise
@@ -208,8 +207,8 @@ Run an experiment with one command, and view it in one notebook.
   noise field, and chaining (1, 2, 4 jumps) against the simulator. Jumps are fractions of the particles
   left after the start, so the same settings work on the smoke data.
 - `runner.py`: `train_model`, `evaluate`, and `submit`. `submit`:
-  - submits one `train.sbatch` job per model not yet finished, named `train-<hash>`, logging to the
-    model folder;
+  - submits one `train.sbatch` job per model not yet finished, named `train-<experiment>-<label>`,
+    logging to the model folder;
   - waits on a model already queued under that name, from any experiment, instead of training it twice;
   - submits `evaluate.sbatch` with `--dependency=afterok:<jobs>`, logging to the results folder, unless
     the results exist;
@@ -229,12 +228,30 @@ timed run that sets the phase 1 budget (`experiments-plan.md`, step 4).
 
 Add the second objective and the second backbone, which A2, A3, B2, and B3 need.
 
-- Flow matching: straight path between data and noise, logit-normal time, Euler sampler. Same
-  interface as the EDM denoiser.
-- DiT: patch embedding, 2D RoPE, AdaLN conditioning. Sizes S and L from `experiments-plan.md`.
-- Both work for DLA and erosion, and for any input channel count.
-- Smoke tests for every task, backbone, and objective combination.
-- Register A2, A3, and A4, with their notebooks. A4 runs the DLA suite once per step count.
+- `flow.py`: flow matching. Straight path `z_s = (1 − s) z + s ε` between the target (divided by
+  `sigma_data`) and noise; the network predicts the velocity `ε − z`; `s` logit-normal in training;
+  Euler sampler, one network call per step. `FlowModel` has the same inputs as the EDM `Denoiser`.
+- `dit.py`: DiT with patch embedding, 2D RoPE, and AdaLN-Zero conditioning, with the same interface as
+  `UNet`. `model.build_backbone` picks either; both wrappers take `backbone=`.
+  - Sizes: S is 8 blocks of width 240, 4 heads (8.6 M, against the U-Net's 8.4 M); L is 12 blocks of
+    width 384, 8 heads (32.5 M, against 32 M). The plan's first estimates (7 M and 30 M at widths 256
+    and 448) left out the AdaLN layers.
+- `sampling.py`: `generate` and `network_calls` for any objective. Prediction code calls it instead of
+  checking the model's type.
+- `Config`: `objective` adds `flow_matching`; `backbone` adds `dit`, with `patch`, `dit_depth`,
+  `dit_width`, `dit_heads`.
+- Smoke tests for every task, backbone, and objective combination (12), plus the RoPE offset property,
+  the Euler sampler on Gaussian data, and the flow loss at the exact velocity.
+- Registered A2 (objective), A3 (backbone), and A4 (sampler steps), with notebooks. The DLA suite's
+  `step_sweep` scores each model at each step count (entries `<label>@<steps>`, with network calls), and
+  `plot_steps` draws distance to the simulator against network calls.
+- `DLA_BEST` in `experiments.py` names the model A5 and A6 use. Set it after A2 to A4 are read.
+
+- Model folders by name instead of by config hash. An experiment's model is either a `Config` it trains
+  into `models/<experiment>/<label>/`, or `Ref(experiment, label)` to another experiment's model, so
+  reuse is written in the registry (A2's EDM arm is `Ref("A1", "base")`). Before a stored model is used
+  or resumed, its `config.json` is compared with the registry; if a training setting differs, the run
+  stops and names the fields. Adding a `Config` field no longer affects trained models.
 
 Check-in: the smoke tests, and the parameter counts against the plan's.
 

@@ -85,7 +85,7 @@ def test_suite_writes_a_readable_results_folder(dla_root, tmp_path, objective):
     out = evaluate_dla({"base": model}, tmp_path / "results", data_root=dla_root,
                        settings=Settings(steps=2, batch_size=4), allow_dirty=True, device="cpu")
     results = read_results(out)
-    assert results.manifest["models"]["base"]["folder"] == "model"
+    assert results.manifest["models"]["base"]["folder"].endswith("/model")
     assert results.manifest["conditions"] == ["p=0.1", "p=1", "start=0", "start=1"]
     for cond in results.manifest["conditions"]:
         row = results.scalars["base"][cond]
@@ -99,4 +99,24 @@ def test_suite_writes_a_readable_results_folder(dla_root, tmp_path, objective):
         plots.plot_metric(results, metric, show=False)
     plots.plot_examples(results, show=False)
     plots.plot_radial_density(results, show=False)
+    matplotlib.pyplot.close("all")
+
+
+def test_step_sweep_scores_each_model_at_each_step_count(dla_root, tmp_path):
+    from dataclasses import replace
+
+    folders = {}
+    for objective in ("edm", "flow_matching"):
+        cfg = replace(PROFILES["smoke_dla"], objective=objective)
+        folders[objective] = train(cfg, data_root=dla_root, out=tmp_path / objective)["folder"]
+    out = evaluate_dla(folders, tmp_path / "results", data_root=dla_root,
+                       settings=Settings(step_sweep=(1, 3), batch_size=4, only="p="), allow_dirty=True, device="cpu")
+    results = read_results(out)
+    entries = results.manifest["entries"]
+    assert list(entries) == ["edm@1", "edm@3", "flow_matching@1", "flow_matching@3"]
+    assert [e["network_calls"] for e in entries.values()] == [1, 5, 1, 3]
+    assert results.manifest["conditions"] == ["p=0.1", "p=1"]
+    assert plots.models(results) == list(entries)
+    plots.plot_steps(results, show=False)
+    plots.table(results)
     matplotlib.pyplot.close("all")

@@ -243,7 +243,7 @@ trains fast.
 - Varies: backbone ∈ {U-Net, DiT}, as in B3.
   - DiT (Diffusion Transformer): patch size 4 (32 × 32 = 1,024 tokens at 128²), 2D RoPE (rotary
     position embeddings), AdaLN conditioning (layer norm scaled and shifted by the conditioning), 8
-    layers, width 256, 4 heads. About 7 M parameters, near the U-Net's 8.4 M.
+    layers, width 240, 4 heads. About 8.6 M parameters, near the U-Net's 8.4 M.
 - Fixed: objective from A2.
 - Models trained: 1 (DiT). The U-Net arm is A2's winning model.
 - Data: as A1.
@@ -603,10 +603,12 @@ All track B data is whole runs from `main_256` or a `_256` test-only group.
   terrain?
 - Varies: backbone and size ∈ {U-Net S, U-Net L, DiT S, DiT L}.
   - U-Net S: the base, 8.4 M parameters.
-  - U-Net L: channels (64, 128, 256, 512), about 34 M parameters.
+  - U-Net L: channels (64, 128, 256, 512), about 32 M parameters.
   - DiT S: patch size 8 (32 × 32 = 1,024 tokens at 256²), 2D RoPE, AdaLN conditioning, 8 layers,
-    width 256, 4 heads. About 7 M parameters.
-  - DiT L: as DiT S, 12 layers, width 448, 8 heads. About 30 M parameters.
+    width 240, 4 heads. About 8.6 M parameters.
+  - DiT L: as DiT S, 12 layers, width 384, 8 heads. About 32.5 M parameters.
+  - Widths are set so each DiT matches its U-Net's parameter count. The AdaLN layers (6 × width² per
+    block) are a third of a DiT's parameters.
   - Optional: FNO (Fourier Neural Operator) as a regression model, 4 layers, width 64, 32 modes, since
     the closest prior work on landscape evolution used it.
 - Position encoding must be relative (RoPE), so the same model can run as a world level, where a

@@ -31,17 +31,18 @@ def check_commit() -> None:
 
 
 def _list(args) -> None:
-    from .experiments import EXPERIMENTS
-    from .identity import is_finished, model_dir
+    from .experiments import EXPERIMENTS, resolve
+    from .paths import is_finished, model_dir
     from .results import results_dir
 
     for name, exp in EXPERIMENTS.items():
         done = (results_dir(name) / "manifest.json").exists()
         print(f"{name:<20} {exp.title}  [{exp.suite}]{'  results' if done else ''}")
-        for label, cfg in exp.models.items():
-            folder = model_dir(cfg)
+        for label in exp.models:
+            owner, owner_label, _ = resolve(name, label)
+            folder = model_dir(owner, owner_label)
             state = "trained" if is_finished(folder) else ("started" if folder.exists() else "")
-            print(f"    {label:<16} {folder.name:<32} {state}")
+            print(f"    {label:<16} {owner + '/' + owner_label:<32} {state}")
 
 
 def _submit(args) -> None:

@@ -1,29 +1,31 @@
 """Training settings: one frozen ``Config`` per model, plus a few named profiles.
 
-A model's identity is its config (``identity.py``): two configs that differ only in ``profile`` or in
-fields that do not change the trained weights train the same model.
+A trained model's folder holds its config as ``config.json`` (``config_to_json``), so the settings it was
+trained with can always be read back (``config_from_json``).
 """
 
-from dataclasses import dataclass, replace
+import json
+from dataclasses import asdict, dataclass, fields, replace
 
 TASKS = ("erosion", "dla")
-BACKBONES = ("unet",)
-OBJECTIVES = ("regression", "edm")
+BACKBONES = ("unet", "dit")
+OBJECTIVES = ("regression", "edm", "flow_matching")
 LEVELS = (None, "coarse", "fine")
 DLA_CONDITIONING = ("p", "x")  # normalization.dla_conditioning
 
 
 @dataclass(frozen=True)
 class Config:
-    """Settings for one training run. The model is saved in ``artifacts/models/<profile>-<hash>/``
-    (``identity.model_dir``)."""
+    """Settings for one training run. A registered experiment's model is saved in
+    ``artifacts/models/<experiment>/<label>/`` (``paths.model_dir``)."""
 
-    profile: str  # a readable label; not part of the model's identity
+    profile: str  # a readable name
     data_profile: str  # dataset under artifacts/data/
     # "erosion": snapshot pairs from datagen/ (data.ErosionPairs). "dla": cluster pairs (dla.data.DLAPairs).
     task: str = "erosion"
     backbone: str = "unet"
-    # "regression": predict the target directly with MSE. "edm": sample it with an EDM denoiser.
+    # "regression": predict the target directly with MSE. "edm": sample it with an EDM denoiser
+    # (diffusion.py). "flow_matching": sample it with a flow matching model (flow.py).
     objective: str = "regression"
     # Which runs to use, as (column, condition) pairs; see table.select. Applied to train and val. Empty
     # uses every run. Example: (("fractal", "fbm"), ("index", (0, 2667))).
@@ -50,11 +52,17 @@ class Config:
     # DLA: range of the start step t, both ends included. None uses 1 to 90% of the particle count.
     t_range: tuple[int, int] | None = None
     max_train_samples: int | None = None  # train on only this many fixed pairs (for the overfit test)
-    # Model
+    # Model. U-Net settings apply when backbone = "unet", DiT settings when backbone = "dit" (dit.py).
     channels: tuple[int, ...] = (32, 64, 128, 256)
     blocks: int = 1
     emb_dim: int = 256
     attention: bool = True
+    # DiT S: 8 blocks of width 240, about 8.6 M parameters, near the U-Net's 8.4 M. Patch 8 gives 1,024
+    # tokens at 256²; DLA uses patch 4 at 128².
+    patch: int = 8
+    dit_depth: int = 8
+    dit_width: int = 240
+    dit_heads: int = 4
     # Optimization
     batch_size: int = 32
     lr: float = 3e-4
@@ -147,3 +155,42 @@ def get_config(profile: str, objective: str | None = None) -> Config:
     """The settings for ``profile``, with its objective replaced by ``objective`` if given."""
     cfg = PROFILES[profile]
     return cfg if objective is None else replace(cfg, objective=objective)
+
+
+# Fields that do not change the trained weights. A stored config may differ from a requested one in these.
+NOT_TRAINING = frozenset({"profile", "num_workers", "log_every", "compile", "patience"})
+
+
+def _to_json(value):
+    if isinstance(value, (set, frozenset)):  # tagged, so a set never reads back as a range tuple
+        return {"one_of": sorted((_to_json(v) for v in value), key=lambda v: json.dumps(v, sort_keys=True))}
+    if isinstance(value, (tuple, list)):
+        return [_to_json(v) for v in value]
+    return value
+
+
+def _from_json(value):
+    if isinstance(value, dict) and set(value) == {"one_of"}:
+        return frozenset(_from_json(v) for v in value["one_of"])
+    if isinstance(value, list):
+        return tuple(_from_json(v) for v in value)
+    return value
+
+
+def config_to_json(cfg: Config) -> dict:
+    """``cfg`` as plain JSON values. Tuples become lists; sets become ``{"one_of": [...]}``."""
+    return {k: _to_json(v) for k, v in asdict(cfg).items()}
+
+
+def config_from_json(values: dict) -> Config:
+    """The inverse of ``config_to_json``. Fields missing from ``values`` (added since it was written) take
+    their defaults; fields no longer in ``Config`` are dropped."""
+    known = {f.name for f in fields(Config)}
+    return Config(**{k: _from_json(v) for k, v in values.items() if k in known})
+
+
+def training_differences(stored: Config, requested: Config) -> list[str]:
+    """Names of the fields, other than ``NOT_TRAINING``, in which two configs differ."""
+    a, b = asdict(stored), asdict(requested)
+    return sorted(k for k in a if a[k] != b[k] and k not in NOT_TRAINING)
+

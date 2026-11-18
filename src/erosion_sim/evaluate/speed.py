@@ -11,7 +11,8 @@ import torch
 
 from ..data import Split
 from ..normalization import PARAMETER_NAMES
-from ..diffusion import DEFAULT_STEPS, Denoiser, sample
+from ..diffusion import DEFAULT_STEPS
+from ..sampling import generate, is_generative
 from ..paths import DATAGEN_DIR
 from ..train import load_checkpoint
 
@@ -21,23 +22,19 @@ def time_model(model, size: tuple[int, int] = (128, 128), batch_sizes=(1, 64), r
                steps: int = DEFAULT_STEPS) -> dict:
     """Seconds per prediction, for each batch size, on the model's device. Returns {batch size: seconds}.
 
-    A regression prediction is one network call. A diffusion prediction is one full sample: ``steps``
-    sampler steps, ``2 * steps - 1`` network calls.
+    A regression prediction is one network call. A generative prediction is one full sample with
+    ``steps`` sampler steps (``sampling.network_calls``).
     """
     device = next(model.parameters()).device
     out = {}
     for batch in batch_sizes:
         x = torch.rand(batch, 1, *size, device=device)
         cond = torch.rand(batch, len(PARAMETER_NAMES), device=device)
-        if isinstance(model, Denoiser):
-            noise = torch.randn(batch, 1, *size, device=device)
+        noise = torch.randn(batch, 1, *size, device=device) if is_generative(model) else None
 
-            def call():
-                return sample(model, x, cond, noise, steps)
-        else:
-            def call():
-                return model(x, cond)
-        for _ in range(3 if not isinstance(model, Denoiser) else 1):  # warm up
+        def call():
+            return generate(model, x, cond, noise, steps)
+        for _ in range(1 if is_generative(model) else 3):  # warm up
             call()
         if device.type == "cuda":
             torch.cuda.synchronize()
@@ -88,7 +85,7 @@ def speed_comparison(checkpoint: Path, split: str = "val", run: int = 0, elapsed
     size 1.
     """
     model, _, cfg, _ = load_checkpoint(checkpoint)
-    diffusion = isinstance(model, Denoiser)
+    diffusion = is_generative(model)
     data = Split.open(cfg.data_profile, split)
     snapshot_dt = float(data.times[1] - data.times[0])
     lags = cfg.lags if cfg.lags is not None else range(1, len(data.times))

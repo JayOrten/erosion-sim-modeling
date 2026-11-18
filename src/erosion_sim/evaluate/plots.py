@@ -8,7 +8,7 @@ import torch
 from PIL import Image
 
 from ..data import ErosionPairs, Split
-from ..diffusion import Denoiser
+from ..sampling import is_generative
 from ..hydrology import drainage_area
 from ..paths import ANIMATIONS_DIR
 from ..predict import default_lag, predict, predict_batch, rollout
@@ -76,7 +76,7 @@ def show_comparison(checkpoints: dict[str, Path], count: int = 3, split: str = "
         panels = [("start", z_a), (f"simulator change, ΔT={dT:,.0f} yr", z_b - z_a)]
         for name, (model, scaling, _, _) in loaded.items():
             z = predict(model, scaling, z_a, params, item["run"], dT, samples=samples, seed=seed, key=(int(i),))
-            if isinstance(model, Denoiser):
+            if is_generative(model):
                 panels += [(f"{name} sample {k + 1}", z[k] - z_a) for k in range(samples)]
                 panels.append((f"{name} spread (m)", z.std(0)))
             else:

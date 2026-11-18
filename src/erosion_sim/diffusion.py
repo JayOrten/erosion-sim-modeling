@@ -13,7 +13,7 @@ from statistics import NormalDist
 import torch
 from torch import nn
 
-from .model import UNet, zero_edges
+from .model import build_backbone, zero_edges
 
 # EDM's settings, from Karras et al. 2022 (arXiv:2206.00364), Table 1, "Ours" column. EDM tuned them
 # for images with sigma_data = 0.5. Here noise levels are multiples of sigma_data, so each EDM noise level
@@ -58,11 +58,11 @@ class Denoiser(nn.Module):
     """
 
     def __init__(self, cond_dim: int, sigma_data: float = 1.0, fixed_edges: bool = True, in_channels: int = 1,
-                 **unet_kwargs):
+                 backbone: str = "unet", **net_kwargs):
         super().__init__()
         self.sigma_data = float(sigma_data)
         self.fixed_edges = fixed_edges
-        self.net = UNet(cond_dim + 1, in_channels=in_channels + 1, fixed_edges=fixed_edges, **unet_kwargs)
+        self.net = build_backbone(backbone, cond_dim + 1, in_channels + 1, fixed_edges, **net_kwargs)
 
     def edges(self, t: torch.Tensor) -> torch.Tensor:
         return zero_edges(t) if self.fixed_edges else t

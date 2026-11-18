@@ -17,7 +17,8 @@ import numpy as np
 from tqdm import tqdm
 
 from ..data import ErosionPairs, Split
-from ..diffusion import DEFAULT_STEPS, Denoiser
+from ..diffusion import DEFAULT_STEPS
+from ..sampling import is_generative
 from ..predict import predict_batch
 from ..train import load_checkpoint
 
@@ -87,7 +88,7 @@ def predict_pairs(checkpoints: Path | dict[str, Path], split: str = "val", count
     out = make_pairs(split_data, run, start, end, z_a, z_b)
     dT = out["dT"]
     for name, (model, scaling, _, _) in loaded.items():
-        if not isinstance(model, Denoiser):
+        if not is_generative(model):
             add_method(out, name, predict_batch(model, scaling, z_a, params, run, dT, batch_size=batch_size,
                                                 bf16=bf16, progress=name if progress else None), "regression")
             continue

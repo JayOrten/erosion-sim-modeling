@@ -6,7 +6,7 @@ One folder per experiment, ``artifacts/results/<name>/``:
 - ``arrays.npz``: curves and per-sample values. Keys are paths joined with ``/``, such as
   ``"A1_base/p=0.1/fractal_dimension"``.
 - ``examples.npz``: a few inputs, samples, and simulator outputs for figures, keyed the same way.
-- ``manifest.json``: the models (folder names and hashes), the suite's settings, the test data, the git
+- ``manifest.json``: the models (``<experiment>/<label>`` folders), the suite's settings, the test data, the git
   commit, the Slurm job ID, and the time. Written last, so it marks a finished result.
 
 Plots read a folder with ``read_results``; they never recompute.

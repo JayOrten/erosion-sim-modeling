@@ -14,8 +14,16 @@ METRIC_LABELS = {
 }
 
 
+def _finite_mean(values) -> float:
+    """Mean of the finite values, NaN if there are none (a metric undefined for every cluster)."""
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    return float(values.mean()) if len(values) else float("nan")
+
+
 def models(results: Results) -> list[str]:
-    return list(results.manifest["models"])
+    """The scored entries: model labels, or ``<label>@<steps>`` in a step sweep."""
+    return list(results.manifest.get("entries", results.manifest["models"]))
 
 
 def plot_metric(results: Results, metric: str, show: bool = True):
@@ -140,3 +148,32 @@ def plot_chain(results: Results, metric: str, show: bool = True):
     if show:
         plt.show()
     return fig
+
+
+def plot_steps(results: Results, metrics: list[str] | None = None, show: bool = True):
+    """Step sweep results (A4): each metric's distance to the simulator (1-Wasserstein, averaged over the
+    test conditions) against network calls per sample, one line per model, and seconds per sample."""
+    names = metrics or list(METRIC_LABELS)
+    entries = results.manifest["entries"]
+    by_model = {}
+    for entry, info in entries.items():
+        by_model.setdefault(info["model"], []).append((info["network_calls"], entry))
+    conds = results.manifest["conditions"]
+    fig, axes = plt.subplots(1, len(names) + 1, figsize=(3.3 * (len(names) + 1), 3.2), layout="constrained")
+    for ax, metric in zip(axes, names):
+        for model, rows in by_model.items():
+            rows = sorted(rows)
+            distance = [_finite_mean([results.scalars[e][c][metric]["wasserstein"] for c in conds]) for _, e in rows]
+            ax.plot([calls for calls, _ in rows], distance, "o-", label=model)
+        ax.set(xscale="log", xlabel="network calls per sample", title=metric)
+    axes[0].set_ylabel("distance to simulator")
+    axes[0].legend(frameon=False, fontsize=8)
+    for model, rows in by_model.items():
+        rows = sorted(rows)
+        axes[-1].plot([c for c, _ in rows], [results.scalars[e]["seconds_per_sample"] for _, e in rows], "o-",
+                      label=model)
+    axes[-1].set(xscale="log", yscale="log", xlabel="network calls per sample", title="seconds per sample")
+    if show:
+        plt.show()
+    return fig
+

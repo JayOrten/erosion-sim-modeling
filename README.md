@@ -21,13 +21,15 @@ terrain/                 erosion_terrain: Terrain, the seeded starting terrain, 
 src/erosion_sim/
   paths.py               where datasets, checkpoints, and animations live
   config.py              training Config: task (erosion, dla), backbone, objective (regression, edm), data filters
-  identity.py            model identity: config hash, model folder, finished check
   table.py               run tables (runs.npz): load, select runs by column
   data.py                Split (one dataset split), training pairs
   normalization.py       every conversion to and from model units: terrain (fixed 64 m unit), erosion
                          parameters (to [0, 1]), height change (divided by its typical size)
-  model.py               the U-Net
+  model.py               the U-Net, and build_backbone (U-Net or DiT)
+  dit.py                 DiT: patch transformer with 2D RoPE and AdaLN conditioning
   diffusion.py           EDM denoiser, loss, sampler, seeded noise
+  flow.py                flow matching: velocity model, loss, Euler sampler
+  sampling.py            generate: one prediction from any model, whatever its objective
   train.py               training into a model folder, resume, load_checkpoint
   predict.py             predictions, batches, and chains of calls over time
   hydrology.py           drainage area and pits
@@ -57,9 +59,9 @@ docs/
 tests/                   uv run pytest
 artifacts/               generated, gitignored; $EROSION_ARTIFACTS moves it
   data/<profile>/<split>/
-  models/<profile>-<hash>/  one model: config.json, best.pt, last.pt, history.json, done.json
+  models/<experiment>/<label>/  one model: config.json, best.pt, last.pt, history.json, done.json
   results/<name>/        one evaluation: results.json, arrays.npz, examples.npz, manifest.json
-  checkpoints/           models trained before identity.py, still read by world/
+  checkpoints/           models trained before models/ existed, still read by world/
   animations/
 ```
 
@@ -99,16 +101,11 @@ Compute nodes have no internet access, so everything is installed on the login n
 Jobs use the installed environments as they are. After changing dependencies, run `uv sync` on the
 login node again.
 
-Training one model:
-
-```sh
-EROSION_COMMIT=$(git rev-parse HEAD) sbatch slurm/train.sbatch <profile> [--set field=value ...]
-```
-
-The model goes to `$EROSION_ARTIFACTS/models/<profile>-<hash>/`, where the hash comes from the config
-(`identity.py`). If a job dies, submitting it again resumes from the last evaluation. Rerunning a
-finished model does nothing. With `EROSION_COMMIT` set, the job refuses
-to run if the repo has moved or `src/` has uncommitted changes.
+Jobs are submitted with `erosion-sim submit <experiment>` (see Use). A model trains into
+`$EROSION_ARTIFACTS/models/<experiment>/<label>/`, and its `config.json` records the settings and commit.
+If a job dies, submitting again resumes from the last evaluation. Rerunning a finished model does
+nothing. Each job refuses to run if the repo has moved since submission or `src/` has uncommitted
+changes.
 
 ## Use
 

@@ -3,8 +3,9 @@
 import numpy as np
 import torch
 
-from ..diffusion import DEFAULT_STEPS, Denoiser, initial_noise, sample
+from ..diffusion import DEFAULT_STEPS, initial_noise
 from ..normalization import dla_conditioning
+from ..sampling import generate, is_generative
 
 THRESHOLD = 0.5  # a cell is occupied if the model's output is above this
 
@@ -17,18 +18,18 @@ def grow(model, start: np.ndarray, p, x, keys: list[tuple], p_range: tuple[float
 
     - ``start``: (N, H, W) occupancy, 1 occupied.
     - ``p``, ``x``: length N, or one value for every row.
-    - ``keys``: one tuple per row. An EDM model starts from the noise for that key, so the same key gives
-      the same sample. Regression ignores it.
+    - ``keys``: one tuple per row. A generative model (EDM or flow matching) starts from the noise for that
+      key, so the same key gives the same sample. Regression ignores it.
     - ``p_range``, ``particles``: the dataset's, for ``dla_conditioning``.
-    - ``steps``: sampler steps for EDM (``2 * steps - 1`` network calls).
+    - ``steps``: sampler steps (``sampling.network_calls`` gives the network calls).
     """
     start = np.asarray(start)
     n = len(start)
     p = np.broadcast_to(np.asarray(p, dtype=np.float64), (n,))
     x = np.broadcast_to(np.asarray(x, dtype=np.float64), (n,))
-    edm = isinstance(model, Denoiser)
-    if edm and len(keys) != n:
-        raise ValueError("an EDM model needs one noise key per row")
+    generative = is_generative(model)
+    if generative and len(keys) != n:
+        raise ValueError("a generative model needs one noise key per row")
     device = next(model.parameters()).device
     autocast = torch.autocast(device.type, dtype=torch.bfloat16, enabled=bf16 and device.type == "cuda")
     cond = dla_conditioning(p, x, p_range, particles)
@@ -38,9 +39,7 @@ def grow(model, start: np.ndarray, p, x, keys: list[tuple], p_range: tuple[float
         inputs = torch.as_tensor(start[rows], dtype=torch.float32, device=device)[:, None]
         c = torch.as_tensor(cond[rows], dtype=torch.float32, device=device)
         with autocast:
-            if edm:
-                y = sample(model, inputs, c, initial_noise(list(keys[rows]), start.shape[-2:], fixed_edges=False), steps)
-            else:
-                y = model(inputs, c)
+            noise = initial_noise(list(keys[rows]), start.shape[-2:], fixed_edges=False) if generative else None
+            y = generate(model, inputs, c, noise, steps)
         out[rows] = (y.float()[:, 0] > THRESHOLD).cpu().numpy()
     return out
