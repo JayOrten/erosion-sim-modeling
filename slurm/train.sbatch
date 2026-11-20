@@ -2,7 +2,6 @@
 # Train one model on one GPU. Submit from the repo root:
 #   erosion-sim submit <experiment>      (submits every job an experiment needs), or by hand:
 #   sbatch slurm/train.sbatch <experiment> <model>
-# Partition and account come from SBATCH_PARTITION and SBATCH_ACCOUNT.
 # If a job dies, submitting it again resumes from the model's last.pt.
 #SBATCH --job-name=train
 #SBATCH --gres=gpu:1

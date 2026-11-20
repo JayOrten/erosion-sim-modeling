@@ -1,7 +1,6 @@
 #!/bin/bash
 # Check that the environments run on a GPU compute node with no internet access.
 # Submit from the repo root: sbatch slurm/check.sbatch
-# Partition and account come from SBATCH_PARTITION and SBATCH_ACCOUNT in your environment.
 #SBATCH --job-name=check
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
@@ -14,7 +13,6 @@ cd "$SLURM_SUBMIT_DIR"
 export UV_OFFLINE=1  # fail at once instead of trying to download
 
 echo "node: $(hostname)"
-echo "artifacts: ${EROSION_ARTIFACTS:-<unset: repo artifacts/>}"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 
 uv run --no-sync python - <<'PY'

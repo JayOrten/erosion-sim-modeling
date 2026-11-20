@@ -2,8 +2,7 @@
 # Run one experiment's evaluation suite on one GPU. Submit from the repo root:
 #   erosion-sim submit <experiment>      (submits every job an experiment needs), or by hand:
 #   sbatch slurm/evaluate.sbatch <experiment>
-# Partition and account come from SBATCH_PARTITION and SBATCH_ACCOUNT.
-# Results go to $EROSION_ARTIFACTS/results/<experiment>/
+# Results go to artifacts/results/<experiment>/
 #SBATCH --job-name=evaluate
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8

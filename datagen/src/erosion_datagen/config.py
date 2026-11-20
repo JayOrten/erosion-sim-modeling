@@ -5,13 +5,17 @@ A dataset (``erosion_master``) is one table of simulator runs, stored in blocks 
 (group, split) is one folder, ``artifacts/data/<dataset>/<group>/<split>/``.
 """
 
-import os
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
-# Datasets go where the training code reads them: $EROSION_ARTIFACTS if set, else the main repo's
-# artifacts/ folder. Same rule as erosion_sim.paths, which this environment cannot import.
-ARTIFACTS_DIR = Path(os.environ.get("EROSION_ARTIFACTS") or Path(__file__).resolve().parents[3] / "artifacts")
+# Datasets go where the training code reads them: the "artifacts" path in the main repo's local.json if
+# it exists, else the repo's artifacts/ folder. Same rule as erosion_sim.paths, which this environment
+# cannot import.
+_REPO_DIR = Path(__file__).resolve().parents[3]
+_LOCAL = _REPO_DIR / "local.json"
+ARTIFACTS_DIR = (Path(json.loads(_LOCAL.read_text())["artifacts"]).expanduser() if _LOCAL.exists()
+                 else _REPO_DIR / "artifacts")
 
 ALL_NOISE = ("perlin", "opensimplex2", "value_cubic")
 ALL_FRACTAL = ("fbm", "ridged")

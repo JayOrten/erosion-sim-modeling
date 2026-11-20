@@ -34,8 +34,8 @@ Each run's starting terrain is an `erosion_terrain.Terrain` and its erodibility 
 `erosion_terrain.ErodibilityMap` (in `../terrain/`, shared with the main package), so the world can
 compute both anywhere. The simulator uses `K × map` per cell.
 
-Output goes to `../artifacts/data/<dataset>/<group>/<split>/`, or under `$EROSION_ARTIFACTS/data/` if
-set: `snapshots.npy` (float32, `(runs, snapshots, rows, cols)`), `runs.npz`, and `meta.json`.
+Output goes to `../artifacts/data/<dataset>/<group>/<split>/`, or under the folder set in `../local.json`
+(see the main README): `snapshots.npy` (float32, `(runs, snapshots, rows, cols)`), `runs.npz`, and `meta.json`.
 `runs.npz` is the run table, one array per column: `group`, `split`, `index`, `run_seed`, every field of
 `Terrain` (`seed` is the noise seed), `K_ref`, `K`, `D`, `m`, `U` (always 0), `ood_param`, and the map
 columns. `meta.json` holds the group settings and the snapshot `times`, and is written last. The main

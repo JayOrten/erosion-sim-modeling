@@ -1,8 +1,7 @@
 #!/bin/bash
 # Simulate one erosion_master group on one CPU node. Submit from the repo root:
 #   sbatch slurm/datagen.sbatch <group> [split ...]
-# Groups: `datagen/.venv/bin/erosion-datagen list`. Partition and account come from SBATCH_PARTITION and
-# SBATCH_ACCOUNT. If the job hits its time limit, submit it again: each split resumes from the runs on
+# Groups: `datagen/.venv/bin/erosion-datagen list`. If the job hits its time limit, submit it again: each split resumes from the runs on
 # disk, and finished splits are skipped.
 #SBATCH --job-name=datagen
 #SBATCH --cpus-per-task=32

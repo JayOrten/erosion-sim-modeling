@@ -39,7 +39,7 @@ docs/plans/, docs/notes/ plans, and measurements and findings
 archive/                 notebooks and configs of past runs, kept for reference; not run or tested
 tests/                   uv run pytest
 logs/                    Slurm job output, gitignored
-artifacts/               generated, gitignored; $EROSION_ARTIFACTS moves it
+artifacts/               generated, gitignored; local.json can move it
   data/<dataset>/<group>/<split>/   runs.npz, snapshots.npy (DLA: arrivals.npy), meta.json
   models/<experiment>/<label>/      config.json, best.pt, last.pt, history.json, done.json
   results/<experiment>/             results.json, arrays.npz, examples.npz, manifest.json
@@ -52,23 +52,19 @@ uv sync
 cd datagen && uv sync   # the simulator's environment: richdem needs Python 3.10
 ```
 
-Everything generated goes under `artifacts/` in the repo, or under `$EROSION_ARTIFACTS` if it is set.
-Both packages follow the same rule.
+Everything generated goes under `artifacts/` in the repo, for both packages. To put it somewhere else,
+create `local.json` at the repo root (gitignored, one per machine):
+
+```json
+{"artifacts": "/path/to/large/storage/erosion"}
+```
 
 ### Cluster
 
 Compute nodes have no internet access, so everything is installed on the login node first.
 
 1. On the login node, clone the repo and run both `uv sync` commands above.
-2. Set these in your shell profile on the cluster. Jobs inherit them from the shell that submits them.
-
-   ```sh
-   export EROSION_ARTIFACTS=/path/to/large/storage/erosion  # data, models, results
-   export SBATCH_PARTITION=...                                # sbatch reads these two itself
-   export SBATCH_ACCOUNT=...
-   ```
-
-3. From the repo root, `sbatch slurm/check.sbatch`. It prints the GPU, torch, and CUDA versions,
+2. From the repo root, `sbatch slurm/check.sbatch`. It prints the GPU, torch, and CUDA versions,
    compiles a small kernel, and runs both test suites, offline. Output: `logs/check-<job>.out`.
 
 After changing dependencies, run `uv sync` on the login node again.

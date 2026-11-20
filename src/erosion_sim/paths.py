@@ -1,18 +1,29 @@
-"""Where datasets, checkpoints, and animations live.
+"""Where datasets, models, and results live.
 
-Everything generated goes under one root folder: ``$EROSION_ARTIFACTS`` if set, else the repo's
-``artifacts/``, which is gitignored. On the cluster, the variable points at large shared storage.
+Everything generated goes under one folder: the ``"artifacts"`` path in the repo's ``local.json`` if that
+file exists, else the repo's ``artifacts/``. ``local.json`` is gitignored, so each machine has its own:
+
+    {"artifacts": "/path/to/large/storage/erosion"}
 
 - ``artifacts/data/<profile>/<split>/``: datasets from ``datagen/``.
 - ``artifacts/models/<experiment>/<label>/``: one trained model per folder (``model_dir``).
 - ``artifacts/results/<name>/``: one evaluation per folder (``experiments/results.py``).
 """
 
-import os
+import json
 from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parents[2]
-ARTIFACTS_DIR = Path(os.environ.get("EROSION_ARTIFACTS") or REPO_DIR / "artifacts")
+
+
+def _artifacts_dir() -> Path:
+    local = REPO_DIR / "local.json"
+    if local.exists():
+        return Path(json.loads(local.read_text())["artifacts"]).expanduser()
+    return REPO_DIR / "artifacts"
+
+
+ARTIFACTS_DIR = _artifacts_dir()
 DATA_DIR = ARTIFACTS_DIR / "data"
 MODELS_DIR = ARTIFACTS_DIR / "models"
 RESULTS_DIR = ARTIFACTS_DIR / "results"

@@ -48,7 +48,7 @@ for label in exp.models:
 CONCLUSION = "## Conclusion\n\n_Written after reading the results above._"
 
 def header(name, title, run_note):
-    return f"# {name}. {title}\n\nSee `docs/plans/experiments-plan.md`, entry {name}. {run_note}\n\nResults are read from `artifacts/results/{name}/` (or `$EROSION_ARTIFACTS/results/{name}/`). Nothing here trains or samples."
+    return f"# {name}. {title}\n\nSee `docs/plans/experiments-plan.md`, entry {name}. {run_note}\n\nResults are read from `artifacts/results/{name}/`. Nothing here trains or samples."
 
 RUN = "Run it from the login node with `erosion-sim submit {name}`."
 notebooks = {
@@ -112,7 +112,7 @@ notebooks = {
         ("markdown", CONCLUSION),
     ]),
     "summary": nb([
-        ("markdown", "# Results summary\n\nEvery finished results folder, from `artifacts/results/` (or `$EROSION_ARTIFACTS/results/`)."),
+        ("markdown", "# Results summary\n\nEvery finished results folder, from `artifacts/results/`."),
         ("code", "from erosion_sim.experiments.registry import EXPERIMENTS\nfrom erosion_sim.experiments.results import list_results\n\nrows = list_results()\nfor r in rows:\n    title = EXPERIMENTS[r[\"name\"]].title if r[\"name\"] in EXPERIMENTS else \"\"\n    print(f\"{r['name']:<20} {title:<26} {r['suite']:<14} {r['time']}\")\n    print(f\"    {r['models']}\")"),
     ]),
 }

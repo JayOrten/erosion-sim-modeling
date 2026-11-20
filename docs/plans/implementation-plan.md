@@ -55,7 +55,7 @@ archive/
   old notebooks, plans, and code
 ```
 
-Artifacts, under `$EROSION_ARTIFACTS` (the repo's `artifacts/` when unset):
+Artifacts, under the repo's `artifacts/`, or the folder named in `local.json`:
 
 ```
 data/<dataset>/<group>/<split>/    runs.npz, snapshots.npy (or arrivals.npy for DLA), meta.json
@@ -82,13 +82,11 @@ Check-in: the moved files, and both test suites passing.
 
 Make every path come from one root folder, and confirm the environments run on a compute node offline.
 
-- `EROSION_ARTIFACTS` sets the artifacts root. `paths.py` reads it. `datagen/config.py` stops
-  computing its own `ARTIFACTS_DIR` and uses the same variable.
+- `paths.py` puts everything under the repo's `artifacts/`, or the `"artifacts"` path in a gitignored
+  `local.json` at the repo root. `datagen/config.py` follows the same rule.
 - `slurm/` scripts: a header with `--gres=gpu:1` (or CPU only), `--cpus-per-task`, `--mem`, and
-  `--time`. Partition and account come from the `SBATCH_PARTITION` and `SBATCH_ACCOUNT` environment
-  variables, which `sbatch` reads, so the scripts hold nothing cluster-specific.
-- A setup section in `README.md`: clone, `uv sync` in the repo and in `datagen/` on the login node, and
-  set `EROSION_ARTIFACTS`.
+  `--time`. No partition or account: the cluster's defaults apply, or `sbatch --partition=...` overrides.
+- A setup section in `README.md`: clone, `uv sync` in the repo and in `datagen/` on the login node.
 - A first job, `slurm/check.sbatch`: runs `uv run --no-sync pytest` on a GPU node, and prints the GPU,
   torch, and CUDA versions.
 
@@ -327,7 +325,7 @@ scaling across processes was poor.
 ## Open questions
 
 - Where notebooks run: on the cluster through Jupyter, or locally after copying
-  `$EROSION_ARTIFACTS/results/` with rsync. Results are small either way. Locally, the notebooks never
+  `artifacts/results/` with rsync. Results are small either way. Locally, the notebooks never
   need the data.
 - CPU allocation for datagen: whole node or not, and how many cores. Sets `--cpus-per-task`.
 - Time limit for CPU jobs. Datagen resumes after a limit, so it only changes how often jobs are
