@@ -26,7 +26,7 @@ from torch.utils.data import Dataset
 from ..config import Config
 from ..data import table
 from ..data.normalization import dla_conditioning
-from ..paths import data_root
+from ..paths import code_version, data_root
 from .config import DataConfig
 from .simulate import occupancy, run_seed, simulate
 
@@ -99,7 +99,7 @@ def make_split(cfg: DataConfig, split: str, out_dir: Path | None = None, progres
             print(f"{cfg.profile}/{split}: {done}/{len(tasks)} runs, {time.perf_counter() - start:.0f} s", flush=True)
     np.save(out_dir / "arrivals.npy", arrivals)
     np.savez(out_dir / "runs.npz", **columns)
-    meta = {"config": asdict(cfg), "split": split, "seconds": time.perf_counter() - start,
+    meta = {"config": asdict(cfg), "split": split, "code": code_version(), "seconds": time.perf_counter() - start,
             "versions": {"numba": version("numba"), "numpy": np.__version__}}
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
     return out_dir

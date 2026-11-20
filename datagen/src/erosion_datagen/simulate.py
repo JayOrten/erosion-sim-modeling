@@ -29,6 +29,25 @@ from landlab.utils.suppress_output import suppress_output
 from .config import ARTIFACTS_DIR, OOD_RANGES, Group
 
 
+def code_version() -> dict:
+    """The repo's commit, and whether ``src/``, ``datagen/``, or ``terrain/`` had uncommitted changes, as
+    ``erosion_sim.paths.code_version`` records them (this environment cannot import it). Recorded in each
+    split's ``meta.json``; never checked."""
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[3]
+
+    def git(*args) -> str:
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
+                              check=True).stdout.strip()
+
+    try:
+        changes = git("status", "--porcelain", "--", "src", "datagen", "terrain")
+        return {"commit": git("rev-parse", "HEAD"), "uncommitted_changes": bool(changes)}
+    except (OSError, subprocess.CalledProcessError):
+        return {"commit": None, "uncommitted_changes": None}
+
+
 def run_seed(group: Group, split: str, index: int) -> int:
     """A run's 63-bit seed: SHA-256 of (dataset, group, split, index) as canonical JSON. It seeds the
     run's PCG64 stream, from which every column of the run is drawn."""
@@ -311,6 +330,7 @@ def make_dataset(
     meta = {
         "config": {k: v for k, v in vars(group).items()},
         "split": split,
+        "code": code_version(),
         "times": times.tolist(),
         "versions": {
             "landlab": _version("landlab"),

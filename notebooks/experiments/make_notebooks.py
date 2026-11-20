@@ -37,7 +37,8 @@ NAME = "{name}"
 exp = registry.get(NAME)
 results = read_results(NAME)
 print(exp.question)
-{{k: results.manifest[k] for k in ("models", "time", "slurm_job")}}
+{{"models": {{label: m["folder"] for label, m in results.manifest["models"].items()}},
+ **{{k: results.manifest[k] for k in ("code", "time", "slurm_job")}}}}
 '''
 HISTORY = '''
 for label in exp.models:
@@ -47,13 +48,63 @@ for label in exp.models:
 '''
 CONCLUSION = "## Conclusion\n\n_Written after reading the results above._"
 
-def header(name, title, run_note):
-    return f"# {name}. {title}\n\nSee `docs/plans/experiments-plan.md`, entry {name}. {run_note}\n\nResults are read from `artifacts/results/{name}/`. Nothing here trains or samples."
+def _data_command(profile: str) -> str:
+    """The command that makes dataset ``profile``: DLA locally, erosion groups as a CPU job."""
+    if profile.startswith("dla"):
+        return f"uv run erosion-sim dla-generate {profile}"
+    return f"sbatch slurm/datagen.sbatch {profile.split('/', 1)[1]}"
 
-RUN = "Run it from the login node with `erosion-sim submit {name}`."
+
+def run_section(name: str) -> str:
+    """Markdown listing what to run for experiment ``name``, read from its registry entry."""
+    exp = registry.get(name)
+    data, train, borrowed, needs = [], [], [], []
+    for label in exp.models:
+        owner, owner_label, cfg = registry.resolve(name, label)
+        data.append(cfg.data_profile)
+        if owner == name:
+            train.append(f"uv run erosion-sim train {name} {label}")
+        else:
+            borrowed.append(f"- `{label}` is `{owner}/{owner_label}`, trained in {owner}. If it is not trained yet, "
+                            f"`uv run erosion-sim train {name} {label}` trains it there.")
+        for kind, other in (("residual_of", cfg.residual_of), ("teacher", cfg.teacher)):
+            if other:
+                needs.append(f"- `{label}` needs `{other}` trained first ({kind}).")
+    settings = exp.settings
+    test = getattr(settings, "data_profile", None)
+    if test:
+        data.append(test)
+    data = list(dict.fromkeys(data))
+    lines = ["## Run", "", "Run these from the repo root, in order. `uv run erosion-sim list` shows what is already "
+             "trained.", "", "**1. Data.** Skip any that already exist.", "", "```sh"]
+    lines += [_data_command(d) for d in data]
+    if "simulator_chunks" in getattr(settings, "baselines", ()):
+        group = (test or data[0]).split("/", 1)[1]
+        lines.append(f"(cd datagen && uv run erosion-datagen chunked {group} test --chunk {settings.chunk})"
+                     "   # in a CPU job")
+    lines += ["```", ""]
+    if train:
+        lines += ["**2. Train.** One command per model; each resumes if stopped.", "", "```sh", *train, "```", ""]
+    else:
+        lines += ["**2. Train.** Nothing new: every model comes from another experiment.", ""]
+    if borrowed or needs:
+        lines += [*borrowed, *needs, ""]
+    lines += ["**3. Evaluate.**", "", "```sh", f"uv run erosion-sim evaluate {name}", "```", "",
+              f"On the cluster, `uv run erosion-sim submit {name}` does steps 2 and 3 as Slurm jobs.", "",
+              "Then run the cells below."]
+    return "\n".join(lines)
+
+
+def header(name: str, note: str = "") -> str:
+    exp = registry.get(name)
+    note = f" {note}" if note else ""
+    return (f"# {name}. {exp.title}\n\n{exp.question}\n\nSee `docs/plans/experiments-plan.md`, entry {name}.{note} "
+            f"Results are read from `artifacts/results/{name}/`. Nothing here trains or samples.\n\n{run_section(name)}")
+
+
 notebooks = {
     "A1": nb([
-        ("markdown", header("A1", "DLA base", RUN.format(name="A1"))),
+        ("markdown", header("A1")),
         ("code", SETUP.format(name="A1", plots="dla")),
         ("markdown", "## Training"),
         ("code", HISTORY),
@@ -66,7 +117,7 @@ notebooks = {
         ("markdown", CONCLUSION),
     ]),
     "A2": nb([
-        ("markdown", header("A2", "Objective", RUN.format(name="A2") + " The EDM arm is A1's model; only flow matching trains.")),
+        ("markdown", header("A2", "The EDM arm is A1's model; only flow matching trains.")),
         ("code", SETUP.format(name="A2", plots="dla")),
         ("markdown", "## Training"),
         ("code", HISTORY),
@@ -77,7 +128,7 @@ notebooks = {
         ("markdown", CONCLUSION + "\n\nThen set `DLA_BEST` and A3's models in `experiments/registry.py` to the winning objective."),
     ]),
     "A3": nb([
-        ("markdown", header("A3", "Backbone", RUN.format(name="A3"))),
+        ("markdown", header("A3")),
         ("code", SETUP.format(name="A3", plots="dla")),
         ("markdown", "## Training\n\nCompare time per step too: the history's `seconds` over its last step."),
         ("code", HISTORY + "\nfor label in exp.models:\n    done = json.loads((model_folder(NAME, label)[0] / \"done.json\").read_text())\n    print(label, f\"{done['seconds'] / done['step'] * 1000:.1f} ms per step\")"),
@@ -87,7 +138,7 @@ notebooks = {
         ("markdown", CONCLUSION),
     ]),
     "A4": nb([
-        ("markdown", header("A4", "Sampler steps", RUN.format(name="A4") + " No training: A2's two models at 4, 8, 16, 32, and 64 steps.")),
+        ("markdown", header("A4", "No training: A2's two models at 4, 8, 16, 32, and 64 steps.")),
         ("code", SETUP.format(name="A4", plots="dla")),
         ("markdown", "## Distance to the simulator against network calls\n\nEach point is a metric's 1-Wasserstein distance to the simulator, averaged over the test conditions. Lower is better."),
         ("code", "plots.plot_steps(results)"),
@@ -95,7 +146,7 @@ notebooks = {
         ("markdown", CONCLUSION + "\n\nThen set the step count for A5 and A6 in `experiments/registry.py`."),
     ]),
     "A5": nb([
-        ("markdown", header("A5", "Sticking probability", RUN.format(name="A5"))),
+        ("markdown", header("A5")),
         ("code", SETUP.format(name="A5", plots="dla")),
         ("code", "plots.table(results, [\"gyration_radius\", \"fractal_dimension\", \"connected_fraction\"])"),
         ("code", "for metric in (\"fractal_dimension\", \"gyration_radius\"):\n    plots.plot_metric(results, metric)"),
@@ -103,7 +154,7 @@ notebooks = {
         ("markdown", CONCLUSION),
     ]),
     "A6": nb([
-        ("markdown", header("A6", "Agreement across steps", RUN.format(name="A6"))),
+        ("markdown", header("A6")),
         ("code", SETUP.format(name="A6", plots="dla")),
         ("markdown", "## Containment\n\nFraction of the smaller sample's cells missing from the larger one, for every pair of jumps from one start and one noise field. 0 is perfect agreement."),
         ("code", "plots.plot_containment(results)\nresults.scalars[next(iter(exp.models))][\"containment\"]"),
@@ -123,7 +174,7 @@ def erosion_notebook(exp) -> dict:
     sweep = exp.settings is not None and exp.settings.step_sweep
     chains = exp.settings is not None and exp.settings.chains
     cells = [
-        ("markdown", header(name, exp.title, RUN.format(name=name))),
+        ("markdown", header(name)),
         ("code", SETUP.format(name=name, plots="erosion")),
         ("markdown", "## Training"),
         ("code", HISTORY),
@@ -149,7 +200,7 @@ def erosion_notebook(exp) -> dict:
 def world_notebook(exp) -> dict:
     name = exp.name
     return nb([
-        ("markdown", header(name, exp.title, RUN.format(name=name))),
+        ("markdown", header(name)),
         ("code", SETUP.format(name=name, plots="erosion")),
         ("markdown", "## Training"),
         ("code", HISTORY),

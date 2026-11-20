@@ -36,7 +36,7 @@ import torch
 from ..data.hydrology import fill_pits
 from ..data.pairs import ErosionPairs
 from ..data.splits import Split
-from ..experiments.results import write_results
+from ..experiments.results import model_records, write_results
 from ..objectives.edm import DEFAULT_STEPS, initial_noise
 from ..objectives.sampling import generate, is_generative, network_calls
 from ..training.checkpoints import load_checkpoint
@@ -242,7 +242,7 @@ def evaluate_erosion(models: dict[str, Path], out: Path, settings: Settings = Se
     examples = {"z_a": z_a[:n], "z_b": z_b[:n]} | {entry: z[:n] for entry, z in heights.items()}
     manifest = {
         "suite": "erosion",
-        "models": {label: {"folder": f"{Path(f).parent.name}/{Path(f).name}"} for label, f in models.items()},
+        "models": model_records(models),
         "entries": entries,
         "test": {"data_profile": profile, "split": settings.split, "runs": int(len(runs)), "pairs": int(len(pairs))},
         "settings": asdict(settings),

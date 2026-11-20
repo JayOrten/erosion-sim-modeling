@@ -11,6 +11,7 @@ file exists, else the repo's ``artifacts/``. ``local.json`` is gitignored, so ea
 """
 
 import json
+import subprocess
 from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parents[2]
@@ -55,4 +56,19 @@ def model_path(name: str | Path, root: Path | None = None) -> Path:
 def is_finished(folder: Path) -> bool:
     """Whether the model in ``folder`` finished training (``done.json`` exists)."""
     return (Path(folder) / "done.json").exists()
+
+
+def code_version() -> dict:
+    """The repo's commit, and whether ``src/``, ``datagen/``, or ``terrain/`` had uncommitted changes.
+    Recorded with every dataset, model, and result; never checked. Both values are None outside a git
+    checkout."""
+    def git(*args) -> str:
+        return subprocess.run(["git", "-C", str(REPO_DIR), *args], capture_output=True, text=True,
+                              check=True).stdout.strip()
+
+    try:
+        changes = git("status", "--porcelain", "--", "src", "datagen", "terrain")
+        return {"commit": git("rev-parse", "HEAD"), "uncommitted_changes": bool(changes)}
+    except (OSError, subprocess.CalledProcessError):
+        return {"commit": None, "uncommitted_changes": None}
 

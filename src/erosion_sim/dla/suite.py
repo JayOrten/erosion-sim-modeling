@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..experiments.results import write_results
+from ..experiments.results import model_records, write_results
 from ..objectives.edm import DEFAULT_STEPS
 from ..objectives.sampling import network_calls
 from ..training.checkpoints import load_checkpoint
@@ -127,8 +127,7 @@ def evaluate_dla(models: dict[str, Path], out: Path, data_profile: str | None = 
 
     manifest = {
         "suite": "dla",
-        "models": {label: {"folder": f"{Path(folder).parent.name}/{Path(folder).name}"}
-                   for label, folder in models.items()},
+        "models": model_records(models),
         "test": {"data_profile": test.path.parent.name, "split": "test", "runs": len(test)},
         "entries": entries,
         "conditions": [c.name for c in conds],
@@ -229,8 +228,7 @@ def evaluate_agreement(models: dict[str, Path], out: Path, data_profile: str | N
 
     manifest = {
         "suite": "dla_agreement",
-        "models": {label: {"folder": f"{Path(folder).parent.name}/{Path(folder).name}"}
-                   for label, folder in models.items()},
+        "models": model_records(models),
         "test": {"data_profile": test.path.parent.name, "split": "test", "runs": len(test)},
         "entries": {label: {"model": label, "steps": settings.steps,
                             "network_calls": network_calls(loaded[label][0], settings.steps)} for label in models},

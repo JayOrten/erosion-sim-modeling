@@ -82,6 +82,7 @@ def test_a_rerun_resumes_to_the_same_result(data_root, tmp_path, monkeypatch, ob
     resumed = train(cfg, out=tmp_path / "split", **args)
     assert is_finished(tmp_path / "split")
     assert resumed["eval_step"] == full["eval_step"] == [4, 8]
+    assert [x["start_step"] for x in resumed["sessions"]] == [0, 4]  # the first session and the resume
     np.testing.assert_allclose(resumed["train_loss"], full["train_loss"], rtol=1e-5)
     np.testing.assert_allclose(resumed["val_loss"], full["val_loss"], rtol=1e-5)
     a = torch.load(tmp_path / "full" / "best.pt", weights_only=False)["model"]

@@ -1,3 +1,4 @@
+import json
 import subprocess
 
 import numpy as np
@@ -62,7 +63,20 @@ def test_smoke_experiments_train_and_evaluate(dla_root, tmp_path):
 
     out = runner.evaluate("smoke_A", data_root=dla_root, models_root=models, out=tmp_path / "r1",
                           device="cpu")
-    assert read_results(out).manifest["suite"] == "dla"
+    manifest = read_results(out).manifest
+    assert manifest["suite"] == "dla"
+    # The manifest keeps a copy of what was scored, and the code version.
+    record = manifest["models"]["base"]
+    assert record["folder"] == "smoke_A/base" and record["config"]["profile"] == "smoke_dla"
+    assert record["training"]["step"] > 0 and "commit" in record["code"] and "commit" in manifest["code"]
+    # Logs, and a training session per run.
+    assert "step" in (folder / "train.log").read_text() and (out / "evaluate.log").exists()
+    history = json.loads((folder / "history.json").read_text())
+    assert [s["start_step"] for s in history["sessions"]] == [0]
+    # Finished results are not replaced by accident.
+    with pytest.raises(FileExistsError):
+        runner.evaluate("smoke_A", data_root=dla_root, models_root=models, out=out, device="cpu")
+    runner.evaluate("smoke_A", data_root=dla_root, models_root=models, out=out, device="cpu", force=True)
 
     out = runner.evaluate("smoke_A_agreement", data_root=dla_root, models_root=models, out=tmp_path / "r2",
                           device="cpu")
@@ -137,7 +151,8 @@ def test_submit_skips_trained_models_and_existing_results(tmp_models):
     assert len(commands) == 1 and not any(a.startswith("--dependency") for a in commands[0])
     (tmp_models / "results" / "smoke_A" / "manifest.json").write_text("{}")
     assert runner.submit("smoke_A", run=FakeSlurm()) == []
-    assert len(runner.submit("smoke_A", run=FakeSlurm(), force_evaluate=True)) == 1
+    forced = runner.submit("smoke_A", run=FakeSlurm(), force_evaluate=True)
+    assert len(forced) == 1 and forced[0][-2:] == ["smoke_A", "--force"]
 
 
 def test_submit_dry_run_only_prints(tmp_models):

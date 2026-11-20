@@ -89,9 +89,27 @@ Every experiment in the experiments plan is an entry in `src/erosion_sim/experim
 Without Slurm the same runs directly: `erosion-sim train <experiment> <model>`, then
 `erosion-sim evaluate <experiment>`.
 
-A model trains into `models/<experiment>/<label>/`, and its `config.json` records the settings. If a job
-dies, running it again resumes from the last evaluation; a finished model is skipped.
-If an entry is edited after its model trained, train and evaluate stop and name the changed fields.
+A model trains into `models/<experiment>/<label>/`. If a job dies, running it again resumes from the last
+evaluation; a finished model is skipped. If an entry is edited after its model trained, train and evaluate
+stop and name the changed fields. `evaluate` will not replace existing results without `--force`.
+
+### Records
+
+Every dataset, model, and result says what made it. "Code version" below is the git commit and whether
+`src/`, `datagen/`, or `terrain/` had uncommitted changes; it is recorded, never checked.
+
+- **Data**, `data/<dataset>/<group>/<split>/`: `runs.npz` holds every run's parameters and seed (each run
+  is a fixed function of them); `meta.json` holds the group settings, snapshot times, code version,
+  package versions, and time taken.
+- **Models**, `models/<experiment>/<label>/`: `config.json` (the full config and code version);
+  `history.json` (loss curves, validation, seconds, and one entry per training session with its start
+  step and code version, so a resume under changed code shows); `done.json` (final step, best validation
+  loss, seconds); `train.log` (everything printed, every session).
+- **Results**, `results/<experiment>/`: the numbers, curves, and examples; `manifest.json` (a copy of each
+  scored model's config, code version, and final step and validation loss; the test data; the suite
+  settings; the code version; the Slurm job; the time); `evaluate.log`.
+
+Slurm jobs also write `slurm-<job>.out` into the model or results folder.
 
 To look at a world, `uv run python -m erosion_sim.world.viewer --models <coarsest folder> ... <finest>`.
 

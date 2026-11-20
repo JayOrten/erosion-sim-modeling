@@ -6,8 +6,9 @@ One folder per experiment, ``artifacts/results/<name>/``:
 - ``arrays.npz``: curves and per-sample values. Keys are paths joined with ``/``, such as
   ``"A1_base/p=0.1/fractal_dimension"``.
 - ``examples.npz``: a few inputs, samples, and simulator outputs for figures, keyed the same way.
-- ``manifest.json``: the models (``<experiment>/<label>`` folders), the suite's settings, the test data, the
-  Slurm job ID, and the time. Written last, so it marks a finished result.
+- ``manifest.json``: the models (each one's folder, training config, code version, and final step and
+  validation loss; ``model_records``), the suite's settings, the test data, the code version, the Slurm
+  job ID, and the time. Written last, so it marks a finished result.
 
 Plots read a folder with ``read_results``; they never recompute.
 """
@@ -20,23 +21,39 @@ from pathlib import Path
 
 import numpy as np
 
-from ..paths import RESULTS_DIR
+from ..paths import RESULTS_DIR, code_version
 
 
 def results_dir(name: str) -> Path:
     return RESULTS_DIR / name
 
 
+def model_records(models: dict[str, Path]) -> dict[str, dict]:
+    """What a results manifest keeps of each scored model (label -> model folder): the folder as
+    ``<experiment>/<label>``, its full training config and code version (``config.json``), and how training
+    ended (``done.json``: final step, best validation loss, seconds). A copy, so the manifest still says what
+    was scored if the folder is later retrained or deleted."""
+    records = {}
+    for label, folder in models.items():
+        folder = Path(folder)
+        stored = json.loads((folder / "config.json").read_text())
+        done = folder / "done.json"
+        records[label] = {"folder": f"{folder.parent.name}/{folder.name}", "config": stored["config"],
+                          "code": stored.get("code"),
+                          "training": json.loads(done.read_text()) if done.exists() else None}
+    return records
+
+
 def write_results(folder: Path, scalars: dict, arrays: dict[str, np.ndarray], examples: dict[str, np.ndarray],
                   manifest: dict) -> Path:
-    """Write a results folder. ``manifest`` gets the Slurm job ID and the time added."""
+    """Write a results folder. ``manifest`` gets the code version, the Slurm job ID, and the time added."""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "manifest.json").unlink(missing_ok=True)
     (folder / "results.json").write_text(json.dumps(scalars, indent=2))
     np.savez_compressed(folder / "arrays.npz", **arrays)
     np.savez_compressed(folder / "examples.npz", **examples)
-    manifest = {**manifest, "slurm_job": os.environ.get("SLURM_JOB_ID"),
+    manifest = {**manifest, "code": code_version(), "slurm_job": os.environ.get("SLURM_JOB_ID"),
                 "time": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
     return folder

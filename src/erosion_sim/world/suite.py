@@ -42,7 +42,7 @@ from ..erosion.baselines import (
     chunk_edge_mask,
     chunked,
 )
-from ..experiments.results import write_results
+from ..experiments.results import model_records, write_results
 from ..objectives.edm import DEFAULT_STEPS, initial_noise
 from ..objectives.sampling import generate, is_generative
 from ..training.checkpoints import load_checkpoint
@@ -236,7 +236,7 @@ def evaluate_world(models: dict[str, Path], out: Path, settings: Settings, data_
     kinds = {name: "world" for name, _, _ in worlds} | {f"level:{label}": "level" for label in level_labels}
     manifest = {
         "suite": "world",
-        "models": {label: {"folder": f"{Path(f).parent.name}/{Path(f).name}"} for label, f in models.items()},
+        "models": model_records(models),
         "worlds": {name: {"levels": list(labels), "sampler": sampler} for name, labels, sampler in worlds},
         "entries": {entry: {"kind": kinds.get(entry, "baseline")} for entry in per_pair},
         "test": {"data_profile": profile, "split": settings.split, "runs": int(len(runs)), "pairs": int(len(truths)),

@@ -5,8 +5,8 @@
   experiment's training jobs and its evaluation job (``runner.submit``).
 - ``erosion-sim train <experiment> <model>``: train one model of an experiment, resuming if it was
   interrupted. Does nothing if it is finished.
-- ``erosion-sim evaluate <experiment>``: run the experiment's suite, writing
-  ``artifacts/results/<experiment>/``.
+- ``erosion-sim evaluate <experiment> [--force]``: run the experiment's suite, writing
+  ``artifacts/results/<experiment>/``. ``--force`` replaces existing results.
 - ``erosion-sim dla-generate <profile> [split ...]``: simulate DLA splits (``dla/data.py``). Runs
   locally; the DLA data is small and fast.
 """
@@ -44,7 +44,7 @@ def _train(args) -> None:
 def _evaluate(args) -> None:
     from .experiments.runner import evaluate
 
-    print(f"wrote {evaluate(args.experiment)}", flush=True)
+    print(f"wrote {evaluate(args.experiment, force=args.force)}", flush=True)
 
 
 def _dla_generate(args) -> None:
@@ -78,6 +78,7 @@ def main(argv: list[str] | None = None) -> None:
 
     evaluate = commands.add_parser("evaluate", help="run an experiment's evaluation suite")
     evaluate.add_argument("experiment")
+    evaluate.add_argument("--force", action="store_true", help="replace existing results")
     evaluate.set_defaults(run=_evaluate)
 
     dla = commands.add_parser("dla-generate", help="simulate DLA dataset splits")

@@ -19,7 +19,7 @@ from ..models.layers import count_parameters
 from ..objectives import consistency, flow
 from ..objectives.edm import VAL_SIGMAS, denoising_loss, training_loss
 from ..objectives.residual import residual_rms
-from ..paths import model_path
+from ..paths import code_version, model_path
 from ..seeding import step_generator
 from .checkpoints import build_model, load_checkpoint
 
@@ -204,7 +204,7 @@ def train(cfg: Config, out: Path, data_root: Path | None = None, show: bool = Fa
     best_path, last_path = out / "best.pt", out / "last.pt"
 
     history = {"step": [], "train_loss": [], "lr": [], "eval_step": [], "val_loss": [], "val_skill": [],
-               "objective": cfg.objective}
+               "objective": cfg.objective, "sessions": []}
     best, since_best, done = math.inf, 0, 0
     if last_path.exists():
         saved = torch.load(last_path, map_location=device, weights_only=False)
@@ -222,7 +222,10 @@ def train(cfg: Config, out: Path, data_root: Path | None = None, show: bool = Fa
         since_best = len(history["val_loss"]) - 1 - int(np.argmin(history["val_loss"])) if history["val_loss"] else 0
         print(f"resuming from {last_path} at step {done}", flush=True)
     else:
-        _write_json(out / "config.json", {"config": config_to_json(cfg)})
+        _write_json(out / "config.json", {"config": config_to_json(cfg), "code": code_version()})
+    # One entry per training session (the first, and each resume), so a model resumed under changed code says so.
+    history.setdefault("sessions", []).append({"start_step": done, "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                                               **code_version()})
 
     order = training_order(len(train_data), cfg.steps * cfg.batch_size, cfg.seed)[done * cfg.batch_size:]
     train_loader = DataLoader(train_data, sampler=_OrderSampler(order), drop_last=True, **loader_args)
