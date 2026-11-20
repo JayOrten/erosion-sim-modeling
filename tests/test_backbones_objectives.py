@@ -3,15 +3,19 @@ from dataclasses import replace
 import pytest
 import torch
 
-from erosion_sim import flow
 from erosion_sim.config import PROFILES
-from erosion_sim.diffusion import Denoiser, initial_noise
-from erosion_sim.dit import DiT, apply_rope, rope_angles
-from erosion_sim.model import UNet, build_backbone
-from erosion_sim.sampling import generate, is_generative, network_calls
-from erosion_sim.train import load_checkpoint, train
+from erosion_sim.models import build_backbone
+from erosion_sim.models.dit import DiT, apply_rope, rope_angles
+from erosion_sim.models.fno import FNO
+from erosion_sim.models.unet import UNet
+from erosion_sim.objectives import flow
+from erosion_sim.objectives.edm import Denoiser, initial_noise
+from erosion_sim.objectives.sampling import generate, is_generative, network_calls
+from erosion_sim.training.checkpoints import load_checkpoint
+from erosion_sim.training.train import train
 
-SMALL_DIT = dict(backbone="dit", patch=4, dit_depth=2, dit_width=16, dit_heads=4)
+SMALL = {"unet": {}, "dit": dict(backbone="dit", patch=4, dit_depth=2, dit_width=16, dit_heads=4),
+         "fno": dict(backbone="fno", fno_modes=4, fno_width=8, fno_depth=2)}
 
 
 def test_rope_scores_depend_only_on_the_offset():
@@ -85,20 +89,82 @@ def test_generate_and_network_calls_follow_the_objective():
         assert generate(model, x, cond, noise, 2).shape == (2, 1, 16, 16)
 
 
-@pytest.mark.parametrize("backbone", ["unet", "dit"])
+@pytest.mark.parametrize("backbone", ["unet", "dit", "fno"])
 @pytest.mark.parametrize("objective", ["regression", "edm", "flow_matching"])
 @pytest.mark.parametrize("task", ["erosion", "dla"])
 def test_every_task_backbone_and_objective_trains_and_loads(task, backbone, objective, data_root, dla_root, tmp_path):
     base = PROFILES["smoke_dla" if task == "dla" else "smoke"]
-    cfg = replace(base, objective=objective, **(SMALL_DIT if backbone == "dit" else {}))
+    cfg = replace(base, objective=objective, **SMALL[backbone])
     history = train(cfg, data_root=dla_root if task == "dla" else data_root, out=tmp_path / "m")
     assert all(torch.isfinite(torch.tensor(history["train_loss"] + history["val_loss"])))
     model, _, loaded, _ = load_checkpoint(tmp_path / "m", device="cpu")
     assert loaded == cfg
     net = model.net if is_generative(model) else model
-    assert isinstance(net, DiT if backbone == "dit" else UNet)
+    assert isinstance(net, {"unet": UNet, "dit": DiT, "fno": FNO}[backbone])
     size = 48 if task == "dla" else 16
     x = torch.rand(2, cfg.in_channels, size, size)
     noise = torch.randn(2, 1, size, size)
     with torch.no_grad():
         assert generate(model, x, torch.rand(2, cfg.cond_dim), noise, 2).shape == (2, 1, size, size)
+
+
+def test_fno_is_shift_equivariant():
+    model = FNO(2, modes=4, width=8, depth=2, fixed_edges=False)
+    torch.nn.init.normal_(model.out.weight)
+    x, cond = torch.rand(1, 1, 16, 16), torch.rand(1, 2)
+    shifted = model(torch.roll(x, (3, 5), (-2, -1)), cond)
+    torch.testing.assert_close(shifted, torch.roll(model(x, cond), (3, 5), (-2, -1)), atol=1e-5, rtol=1e-4)
+
+
+def test_residual_model_adds_a_sample_to_the_regression(data_root, tmp_path):
+    from erosion_sim.objectives.residual import ResidualModel
+
+    base = train(PROFILES["smoke"], data_root=data_root, out=tmp_path / "base")["folder"]
+    cfg = replace(PROFILES["smoke"], objective="edm", residual_of=str(base))
+    train(cfg, data_root=data_root, out=tmp_path / "residual")
+    model, scaling, loaded, ckpt = load_checkpoint(tmp_path / "residual", device="cpu")
+    regression, regression_scaling, _, _ = load_checkpoint(base, device="cpu")
+    assert isinstance(model, ResidualModel) and loaded.residual_of == str(base)
+    assert scaling == regression_scaling  # the residual model works in the regression model's units
+    assert is_generative(model) and network_calls(model, 4) == 1 + 7
+    x, cond, noise = torch.rand(2, 1, 16, 16), torch.rand(2, 4), torch.randn(2, 1, 16, 16)
+    expected = regression(x, cond) + generate(model.inner, x, cond, noise, 2)
+    torch.testing.assert_close(generate(model, x, cond, noise, 2), expected.detach())
+    with pytest.raises(ValueError):
+        replace(PROFILES["smoke"], residual_of=str(base))  # a regression residual model
+
+
+def test_consistency_student_starts_from_the_teacher_and_samples_in_few_calls(data_root, tmp_path):
+    from erosion_sim.objectives import consistency
+
+    teacher = train(replace(PROFILES["smoke"], objective="edm"), data_root=data_root, out=tmp_path / "teacher")["folder"]
+    cfg = replace(PROFILES["smoke"], objective="consistency", teacher=str(teacher), steps=0)
+    with pytest.raises(ValueError):
+        replace(PROFILES["smoke"], objective="consistency")
+    train(cfg, data_root=data_root, out=tmp_path / "student0", steps=1, eval_every=1, lr=0.0, warmup_steps=0)
+    student, scaling, _, ckpt = load_checkpoint(tmp_path / "student0", device="cpu")
+    edm, edm_scaling, _, _ = load_checkpoint(teacher, device="cpu")
+    assert isinstance(student, consistency.ConsistencyModel) and scaling == edm_scaling
+    assert student.sigma_data == edm.sigma_data
+    for k, v in edm.state_dict().items():  # no learning rate, so still the teacher's weights
+        torch.testing.assert_close(student.state_dict()[k], v)
+    train(cfg, data_root=data_root, out=tmp_path / "student", steps=6)
+    student = load_checkpoint(tmp_path / "student", device="cpu")[0]
+    x, cond, noise = torch.rand(2, 1, 16, 16), torch.rand(2, 4), torch.randn(2, 1, 16, 16)
+    assert network_calls(student, 2) == 2
+    one, two = generate(student, x, cond, noise, 1), generate(student, x, cond, noise, 2)
+    assert one.shape == two.shape == (2, 1, 16, 16) and not torch.equal(one, two)
+    # Run step by step as world phases, the sample is the same.
+    from erosion_sim.objectives.sampling import (
+        phase_schedules,
+        run_phase,
+        start_state,
+        to_target,
+    )
+
+    schedules = phase_schedules(student, 2, (5.0,))
+    state = start_state(student, noise, schedules)
+    for schedule in schedules:
+        state = run_phase(student, x, cond, state, schedule)
+    torch.testing.assert_close(to_target(student, state), two, atol=1e-5, rtol=1e-5)
+

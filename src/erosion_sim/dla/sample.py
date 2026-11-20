@@ -3,9 +3,9 @@
 import numpy as np
 import torch
 
-from ..diffusion import DEFAULT_STEPS, initial_noise
-from ..normalization import dla_conditioning
-from ..sampling import generate, is_generative
+from ..data.normalization import dla_conditioning
+from ..objectives.edm import DEFAULT_STEPS, initial_noise
+from ..objectives.sampling import generate, is_generative
 
 THRESHOLD = 0.5  # a cell is occupied if the model's output is above this
 

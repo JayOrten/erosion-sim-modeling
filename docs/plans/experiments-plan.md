@@ -495,7 +495,8 @@ before phase 1, so results stay comparable across phases.
   km², drainage area distribution (`hydrology_metrics`).
 - **Slope-area fit.** The stream power law predicts that in steady channels, slope scales with
   drainage area to the power `−m` (Flint's law). Fit the exponent on the output and compare it to the
-  `m` the model was given. New.
+  simulator's exponent on the same pair. (Not to `m`: 50,000 yr runs are not steady, and the
+  simulator's own exponent ranges about −0.4 to 0.8 for `m` 0.3 to 0.6.)
 - **Sample spread**, for sampled models (`sample_spread`).
 - **Error by parameter and elapsed time** (`error_by_condition`, `error_by_elapsed`).
 
@@ -505,8 +506,10 @@ before phase 1, so results stay comparable across phases.
 - **Track C, per level:** each level on interior windows of test runs, with the true coarse change as
   context for the fine level. Separates the levels' own errors from the pipeline's.
 - **Track C, world benchmark:** run the world over the start terrain of each test run, and score it
-  against that run's snapshots on the interior. The edge margin and window sizes per band are set in
-  step 1.
+  against that run's snapshots on the interior, at least the 32-cell edge margin from the edges.
+  The run's fixed edges change its drainage everywhere: about 10 to 15% of the height change, even
+  200 cells in (`docs/notes/datagen-measurements.md`). The world cannot see where those edges are, so
+  expect an error floor near that size.
 - **Track C, seams:** disagreement between neighboring windows before blending (`window_disagreement`).
 
 **Speed**
@@ -763,15 +766,16 @@ The existing two-level world (`world/`), with the track B recipe from phase 1 fo
   coarse cells (256 m, about 4 periods at period 64).
 - Fine level: 1 m cells. Window 128 cells (about 2 periods). A second input channel holds the coarse
   level's change, upsampled to 1 m *(current)*.
-- Window sizes follow `infinite-plan.md`: coarse about 4 periods, fine about 2. Step 1's feature size
-  measurement confirms or changes them.
+- Window sizes follow `infinite-plan.md`: coarse about 4 periods, fine about 2. With varied noise the
+  feature size per period ranges from 0.4 to 2.7 (`docs/notes/datagen-measurements.md`); the noise is
+  there for variety, and the period is not corrected per noise type.
 - Each level: the track B backbone, objective, and conditioning from phase 1. No fixed edges: a window
   edge is not a boundary *(current)*.
 
 **Training data**
 
-- Windows cropped from run interiors, at least the edge margin away from the fixed edges. The margin
-  is set in step 1.
+- Windows cropped from run interiors, at least 32 cells from the fixed edges. No margin removes the
+  edges' effect (it reaches across the whole run); 32 cells only skips the strongest part.
 - Each training item: one window at a random interior position, randomly flipped *(current)*.
 - The fine level reads the true coarse change from the same run.
 
@@ -860,7 +864,8 @@ The existing two-level world (`world/`), with the track B recipe from phase 1 fo
   sizes of C1 (64 cells at the top, 128 at the fine level).
 - Varies:
   - Band 2: levels ∈ {2 levels with a 128-cell coarse window, 3 levels (1, 4, 16 m)}.
-  - Band 3: levels ∈ {3 levels, 4 levels (1, 4, 16, 64 m)}.
+  - Band 3: levels ∈ {3 levels, 4 levels (1, 4, 16, 64 m)}. The 64 m level's window is 16 cells: 64
+    cells (4,096 m) would not fit a 2048² run.
   - Stacks: one stack per band, against one stack trained on bands 1 to 3 together.
 - Models trained: one per level per configuration, about 14.
 - Train, band 2: `main_1024` train, uniform map (800).
@@ -953,81 +958,10 @@ Choices this plan makes that were not settled before.
 
 ## Steps
 
-### 1. Data settings
-
-Change `datagen` so it can make both datasets.
-
-- The DLA simulator, copied from `../seeded-pa-vae`, with sticking probability, arrival-step storage,
-  and continuation from a stored start cluster. Measure cluster sizes and simulator time, and settle
-  the DLA settings from them.
-- `dla_master`, and every group of `erosion_master`, as profiles with the columns above.
-- The map split: 2/3 uniform, 1/6 patches, 1/6 bands.
-- Erodibility maps: patches and bands, drawn and stored as settings, computed at any world coordinate
-  by `erosion_terrain` (so the world can use them), and passed to the simulator as `K × map`.
-- Out-of-range draws for `ood`.
-- `real_dem`: download, pick, and rescale tiles. A run takes a stored start terrain instead of noise.
-- Measure feature size per noise setting (the 12 combinations), and decide track C's window sizes and edge margin from it.
-- Time a few 2048² runs, and size `main_2048` from the measured cost.
-
-Check-in: each profile generated at smoke size, a few runs of each rendered, and the cost estimate
-redone from a short timed run.
-
-### 2. Generate the data
-
-Run the profiles through `notebooks/world/data.ipynb`, in the batches listed under Cost. The user runs
-it.
-
-Check-in: every split opens, run counts and settings match, disk use matches the estimate.
-
-### 3. Evaluation suites
-
-One function per track that runs every metric for one experiment and writes a results file. Adds the
-DLA metrics, the slope-area fit, and the closed-chunk baselines.
-
-Check-in: each suite on smoke checkpoints, and its output file.
-
-### 4. Experiment runner
-
-- Each experiment is an entry in one registry: its name, its track, its data selection, the configs
-  of its models, and for track C its world settings.
-- One command trains whatever checkpoints are missing, runs the track's suite, and saves the results
-  under `artifacts/results/<experiment>/`, with the config and the git commit.
-- A notebook collects every results file into one table and the standard plots.
-- Measure the time of one training run, and set the phase 1 budget from it.
-
-Check-in: a smoke experiment of each track end to end, and the table.
-
-### 5. Model options for phase 1
-
-- DLA training pairs: occupancy at `t`, `p`, and `x` in; occupancy at `t + x` out.
-- Backbone choice in `Config`: U-Net or DiT.
-- Objective: flow matching, beside regression and EDM.
-
-Check-in: smoke tests for each combination.
-
-### 6. Phase 1
-
-Run A1 to A6, then B1 to B5.
-
-Check-in: after track A, read its results together before starting track B. After B5, pick the recipe
-and revise phase 2.
-
-### 7. Phase 2
-
-Run B6 to B8, then C1 to C5. Build the model inputs these need (erodibility map, drainage area) as
-they come up. Build the analytical method and the chunked baselines before C1, and the world with any
-number of levels before C5.
-
-Check-in: after B8, and after C5.
-
-### 8. Phase 3
-
-Run B9 to B13 and C6 to C9.
-
-Check-in: the tables and figures for the paper.
+How the code was built for these experiments, step by step, and what was built differently: see
+`implementation-plan.md`. Running them: `README.md`, "Use".
 
 ## Open questions
 
-- Track C's window sizes and edge margin depend on step 1's feature size measurement.
 - Run counts for bands 2 and 3 are a first guess. If the top level is short of data, more runs are the
   fix, not larger domains.

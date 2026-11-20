@@ -1,8 +1,7 @@
 #!/bin/bash
 # Run one experiment's evaluation suite on one GPU. Submit from the repo root:
 #   erosion-sim submit <experiment>      (submits every job an experiment needs), or by hand:
-#   EROSION_COMMIT=$(git rev-parse HEAD) sbatch slurm/evaluate.sbatch <experiment>
-# EROSION_COMMIT is optional; when set, the job refuses to run if the repo has moved since submission.
+#   sbatch slurm/evaluate.sbatch <experiment>
 # Partition and account come from SBATCH_PARTITION and SBATCH_ACCOUNT.
 # Results go to $EROSION_ARTIFACTS/results/<experiment>/
 #SBATCH --job-name=evaluate

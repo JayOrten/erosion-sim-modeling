@@ -3,7 +3,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ..results import Results
+from ..experiments.results import Results
 
 METRIC_LABELS = {
     "particles": "particles",

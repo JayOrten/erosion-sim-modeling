@@ -5,11 +5,17 @@ import numpy as np
 import pytest
 import torch
 
-import erosion_sim.train as train_module
-from erosion_sim.config import PROFILES, get_config
-from erosion_sim.config import config_from_json, config_to_json, training_differences
+from erosion_sim.config import (
+    PROFILES,
+    config_from_json,
+    config_to_json,
+    get_config,
+    training_differences,
+)
 from erosion_sim.paths import is_finished
-from erosion_sim.train import load_checkpoint, train
+from erosion_sim.training import train as train_module
+from erosion_sim.training.checkpoints import load_checkpoint
+from erosion_sim.training.train import train
 
 
 def test_smoke_training_fills_the_model_folder(data_root, tmp_path):
@@ -22,12 +28,11 @@ def test_smoke_training_fills_the_model_folder(data_root, tmp_path):
     assert is_finished(out)
     saved = json.loads((out / "config.json").read_text())
     assert config_from_json(saved["config"]) == PROFILES["smoke"]
-    assert "commit" in saved and "dirty" in saved
 
     model, scaling, cfg, ckpt = load_checkpoint(out, device="cpu")
     assert cfg == PROFILES["smoke"]
-    assert len(scaling.parameters.low) == len(scaling.parameters.high) == 5
-    x, cond = torch.rand(2, 1, 16, 16), torch.rand(2, 5)
+    assert len(scaling.parameters.low) == len(scaling.parameters.high) == 4
+    x, cond = torch.rand(2, 1, 16, 16), torch.rand(2, 4)
     with torch.no_grad():
         assert model(x, cond).shape == (2, 1, 16, 16)
 
@@ -102,17 +107,25 @@ def test_free_edges_edm_trains_and_loads(data_root, tmp_path):
     assert not model.fixed_edges and not model.net.fixed_edges
 
 
-@pytest.mark.parametrize("level", ["coarse", "fine"])
-def test_world_levels_train_and_load(data_root, tmp_path, level):
-    cfg = replace(get_config("smoke", "edm"), fixed_edges=False, level=level, crop=8, block=2)
+@pytest.mark.parametrize("cell, context_cell, inputs", [(2, None, ()), (1, 2, ("map", "drainage"))])
+def test_window_levels_train_and_load(data_root, tmp_path, cell, context_cell, inputs):
+    cfg = replace(get_config("smoke", "edm"), fixed_edges=False, cell=cell, window=8 // cell, context_cell=context_cell,
+                  inputs=inputs, augment=True, repeats=2)
     history = train(cfg, data_root=data_root, out=tmp_path / "m")
     assert all(torch.isfinite(torch.tensor(history["train_loss"])))
     model, _, loaded, _ = load_checkpoint(tmp_path / "m", device="cpu")
     assert loaded == cfg and model.net.stem.in_channels == cfg.in_channels + 1
-    size = 8  # fine crops are 8²; coarse items are 16² runs as 2 × 2 means
+    size = 8 // cell
     x = torch.rand(2, cfg.in_channels, size, size)
     with torch.no_grad():
-        assert model(x, torch.rand(2, 5), torch.randn(2, 1, size, size), torch.tensor([1.0, 2.0])).shape == (2, 1, size, size)
+        assert model(x, torch.rand(2, 4), torch.randn(2, 1, size, size), torch.tensor([1.0, 2.0])).shape == (2, 1, size, size)
+
+
+@pytest.mark.parametrize("objective", ["regression", "edm", "flow_matching"])
+def test_drainage_weighted_loss_trains(data_root, tmp_path, objective):
+    cfg = replace(get_config("smoke", objective), drainage_weight=0.5)
+    history = train(cfg, data_root=data_root, out=tmp_path / "m")
+    assert all(np.isfinite(history["train_loss"]))
 
 
 def test_dla_model_trains_and_loads(dla_root, tmp_path):
@@ -141,7 +154,7 @@ def test_ema_is_saved_as_the_model_and_training_weights_kept_for_resuming(data_r
 
 
 def test_update_ema_moves_a_fraction_of_the_way():
-    from erosion_sim.train import update_ema
+    from erosion_sim.training.train import update_ema
 
     ema, model = torch.nn.Linear(2, 2), torch.nn.Linear(2, 2)
     before = ema.weight.clone()

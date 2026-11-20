@@ -3,14 +3,13 @@ import io
 import matplotlib.pyplot as plt
 import numpy as np
 from erosion_terrain import fbm
+from world_helpers import TWO
 
 from erosion_sim.world.viewer import TILE, Tiles, shade
 
-from test_world import LEVELS
-
 
 def tiles():
-    return Tiles(LEVELS, steps=3, bf16=False, batch_size=16, keep=2)  # the untrained test levels
+    return Tiles(TWO, steps=3, bf16=False, batch_size=16, keep=2)  # the untrained test levels
 
 
 SETTINGS = {"seed": 0, "dT": 10_000.0, "K_ref": 2.5e-4, "D_over_K": 1.0, "m": 0.45, "persistence": 0.5}

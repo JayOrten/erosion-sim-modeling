@@ -3,7 +3,7 @@
 A split is one folder, ``artifacts/data/<profile>/<split>/``:
 
 - ``arrivals.npy``: int16, shape (runs, size, size), one arrival image per run (``simulate.py``).
-- ``runs.npz``: the run table (``table.py``). Columns: ``index``, ``seed``, ``p``, and ``start_id`` (the
+- ``runs.npz``: the run table (``data/table.py``). Columns: ``index``, ``seed``, ``p``, and ``start_id`` (the
   shared start a test run continues, or -1 for a run from the seed particle).
 - ``meta.json``: the config and package versions. Written last, so it marks a finished split.
 
@@ -23,9 +23,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .. import table
 from ..config import Config
-from ..normalization import dla_conditioning
+from ..data import table
+from ..data.normalization import dla_conditioning
 from ..paths import data_root
 from .config import DataConfig
 from .simulate import occupancy, run_seed, simulate

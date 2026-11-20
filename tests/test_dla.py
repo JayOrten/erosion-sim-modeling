@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 
+from erosion_sim.data.normalization import dla_conditioning
 from erosion_sim.dla.config import PROFILES
 from erosion_sim.dla.data import NO_START, DLAPairs, DLASplit, make_split, plan_split
 from erosion_sim.dla.simulate import EMPTY, OutgrewGrid, occupancy, simulate
-from erosion_sim.normalization import dla_conditioning
 
 CFG = PROFILES["dla_smoke"]
 

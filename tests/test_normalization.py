@@ -1,10 +1,15 @@
 import numpy as np
-
-from erosion_sim.normalization import (
-    HEIGHT_UNIT, PARAMETER_NAMES, ChangeScaling, ParameterScaling, Scaling, change_rms, terrain_to_model,
-)
-
 from conftest import SIZE, SNAPS
+
+from erosion_sim.data.normalization import (
+    HEIGHT_UNIT,
+    PARAMETER_NAMES,
+    ChangeScaling,
+    ParameterScaling,
+    Scaling,
+    change_rms,
+    terrain_to_model,
+)
 
 
 def test_terrain_is_centered_and_in_height_units():

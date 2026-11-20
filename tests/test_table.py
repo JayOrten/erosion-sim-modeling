@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from erosion_sim import table
+from erosion_sim.data import table
 
 COLUMNS = {
     "index": np.arange(6),

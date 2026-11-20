@@ -2,7 +2,7 @@ import math
 
 import torch
 
-from erosion_sim.diffusion import SIGMA_MAX, SIGMA_MIN, Denoiser, initial_noise
+from erosion_sim.objectives.edm import SIGMA_MAX, SIGMA_MIN, Denoiser, initial_noise
 
 COND = 5
 
@@ -78,7 +78,7 @@ def test_noise_level_changes_the_output():
 def test_loss_weight_gives_unit_loss_for_an_untrained_denoiser():
     # The U-Net's effective target has unit variance at every sigma. An untrained U-Net outputs zero,
     # so its weighted loss is about 1 whatever the noise level.
-    from erosion_sim.diffusion import denoising_loss
+    from erosion_sim.objectives.edm import denoising_loss
 
     model = small_denoiser(sigma_data=0.7)
     torch.manual_seed(0)
@@ -94,7 +94,8 @@ def test_loss_weight_gives_unit_loss_for_an_untrained_denoiser():
 
 def test_smoke_diffusion_training(data_root, tmp_path):
     from erosion_sim.config import get_config
-    from erosion_sim.train import load_checkpoint, train
+    from erosion_sim.training.checkpoints import load_checkpoint
+    from erosion_sim.training.train import train
 
     out = tmp_path / "edm-smoke"
     history = train(get_config("smoke", "edm"), data_root=data_root, show=False, out=out)
@@ -108,7 +109,7 @@ def test_smoke_diffusion_training(data_root, tmp_path):
 
 def test_validation_noise_is_fixed(data_root, tmp_path):
     from erosion_sim.config import get_config
-    from erosion_sim.train import train
+    from erosion_sim.training.train import train
 
     # With a learning rate of zero the model never changes, so fixed noise gives identical losses.
     history = train(get_config("smoke", "edm"), data_root=data_root, show=False, out=tmp_path / "d",
@@ -130,7 +131,7 @@ class GaussianDenoiser(Denoiser):
 
 
 def test_sigma_steps():
-    from erosion_sim.diffusion import sigma_steps
+    from erosion_sim.objectives.edm import sigma_steps
 
     s = sigma_steps(10, 0.7)
     assert len(s) == 11 and s[-1] == 0
@@ -139,7 +140,7 @@ def test_sigma_steps():
 
 
 def test_heun_sampler_solves_the_gaussian_case():
-    from erosion_sim.diffusion import sample
+    from erosion_sim.objectives.edm import sample
 
     # For Gaussian data the ODE has the exact solution y ∝ sqrt(sigma^2 + sigma_data^2).
     sd = 0.7
@@ -157,7 +158,7 @@ def test_heun_sampler_solves_the_gaussian_case():
 
 
 def test_initial_noise_is_keyed():
-    from erosion_sim.diffusion import initial_noise
+    from erosion_sim.objectives.edm import initial_noise
 
     a = initial_noise([(0, 0), (0, 1), (1, 0)], (16, 16))
     b = initial_noise([(0, 1)], (16, 16))
@@ -165,45 +166,6 @@ def test_initial_noise_is_keyed():
     torch.testing.assert_close(a[1], b[0])
     assert not torch.allclose(a[0], a[1]) and not torch.allclose(a[0], a[2])
     assert torch.all(a[..., 0, :] == 0) and torch.all(a[..., :, -1] == 0)
-
-
-def test_predict_and_rollout_with_a_diffusion_model(data_root, tmp_path):
-    import numpy as np
-
-    from erosion_sim.config import get_config
-    from erosion_sim.data import Split
-    from erosion_sim.predict import predict, rollout
-    from erosion_sim.train import load_checkpoint, train
-
-    out = tmp_path / "edm-smoke"
-    train(get_config("smoke", "edm"), data_root=data_root, show=False, out=out)
-    model, scaling, _, _ = load_checkpoint(out, device="cpu")
-    val = Split(data_root / "val")
-    params, z0 = val.columns, val.snapshots[0, 0].astype(np.float64)
-
-    three = predict(model, scaling, z0, params, 0, 1000.0, samples=3, seed=5, steps=4)
-    assert three.shape == (3, *z0.shape) and np.isfinite(three).all()
-    # Sample i depends only on its key, not on how many samples were drawn.
-    one = predict(model, scaling, z0, params, 0, 1000.0, samples=1, seed=5, steps=4)
-    np.testing.assert_allclose(one[0], three[0], rtol=1e-5, atol=1e-5)
-    assert not np.allclose(three[0], three[1])
-    other = predict(model, scaling, z0, params, 0, 1000.0, samples=1, seed=6, steps=4)
-    assert not np.allclose(other[0], three[0])
-    # Edges stay at the start heightmap, as in the simulator.
-    np.testing.assert_allclose(three[:, 0, :], np.broadcast_to(z0[0], (3, z0.shape[1])))
-
-    frames = rollout(model, scaling, z0, params, 0, 1000.0, 3)
-    assert frames.shape == (4, *z0.shape) and np.isfinite(frames).all()
-
-    # Batched over runs, each run gets the frames it would get alone.
-    from erosion_sim.predict import batched_rollout
-
-    starts = val.snapshots[:3, 0].astype(np.float64)
-    for mode in ("rollout", "direct"):
-        batch = batched_rollout(model, scaling, starts, params, [0, 1, 2], 1000.0, 3, mode, seed=2)
-        for r in range(3):
-            alone = rollout(model, scaling, starts[r], params, r, 1000.0, 3, mode, seed=2)
-            np.testing.assert_allclose(batch[r], alone, rtol=1e-5, atol=1e-5)
 
 
 def test_free_edges():
@@ -218,7 +180,7 @@ def test_free_edges():
 
 
 def test_phases_together_equal_one_full_run():
-    from erosion_sim.diffusion import heun, phase_sigmas, sample, sigma_steps
+    from erosion_sim.objectives.edm import heun, phase_sigmas, sample, sigma_steps
 
     model = small_denoiser()
     torch.nn.init.normal_(model.net.out.weight)

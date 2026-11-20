@@ -1,7 +1,7 @@
 """Time the simulator, to compare it with the models in the main package.
 
 The main package cannot import this environment, so it runs this module as a separate process
-(``erosion_sim.evaluate.speed.time_simulator``):
+(``erosion_sim.erosion.speed.time_simulator``):
 
     uv run --project datagen python -m erosion_datagen.timing <request.npz>
 

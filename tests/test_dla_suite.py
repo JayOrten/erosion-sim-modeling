@@ -11,8 +11,8 @@ from erosion_sim.dla.config import PROFILES as DATA_PROFILES
 from erosion_sim.dla.data import DLASplit
 from erosion_sim.dla.simulate import occupancy, run_seed, simulate
 from erosion_sim.dla.suite import Settings, conditions, evaluate_dla
-from erosion_sim.results import DirtyRepo, read_results, write_results
-from erosion_sim.train import train
+from erosion_sim.experiments.results import read_results, write_results
+from erosion_sim.training.train import train
 
 matplotlib.use("Agg")
 DATA = DATA_PROFILES["dla_smoke"]
@@ -65,15 +65,10 @@ def test_conditions_cover_the_test_split(dla_root):
     assert all(c.t + c.x == DATA.particles for c in conds)
 
 
-def test_results_refuse_a_dirty_repo(tmp_path, monkeypatch):
-    import erosion_sim.results as results_module
-
-    monkeypatch.setattr(results_module, "git_state", lambda: {"commit": "abc", "dirty": True})
-    with pytest.raises(DirtyRepo):
-        write_results(tmp_path / "r", {}, {}, {}, {})
-    write_results(tmp_path / "r", {"a": 1}, {"x": np.ones(2)}, {}, {"suite": "test"}, allow_dirty=True)
+def test_results_round_trip(tmp_path):
+    write_results(tmp_path / "r", {"a": 1}, {"x": np.ones(2)}, {}, {"suite": "test"})
     read = read_results(tmp_path / "r")
-    assert read.scalars == {"a": 1} and read.manifest["dirty"] and read.manifest["commit"] == "abc"
+    assert read.scalars == {"a": 1} and read.manifest["suite"] == "test" and "time" in read.manifest
 
 
 @pytest.mark.parametrize("objective", ["edm", "regression"])
@@ -83,7 +78,7 @@ def test_suite_writes_a_readable_results_folder(dla_root, tmp_path, objective):
     cfg = replace(PROFILES["smoke_dla"], objective=objective)
     model = train(cfg, data_root=dla_root, out=tmp_path / "model")["folder"]
     out = evaluate_dla({"base": model}, tmp_path / "results", data_root=dla_root,
-                       settings=Settings(steps=2, batch_size=4), allow_dirty=True, device="cpu")
+                       settings=Settings(steps=2, batch_size=4), device="cpu")
     results = read_results(out)
     assert results.manifest["models"]["base"]["folder"].endswith("/model")
     assert results.manifest["conditions"] == ["p=0.1", "p=1", "start=0", "start=1"]
@@ -110,7 +105,7 @@ def test_step_sweep_scores_each_model_at_each_step_count(dla_root, tmp_path):
         cfg = replace(PROFILES["smoke_dla"], objective=objective)
         folders[objective] = train(cfg, data_root=dla_root, out=tmp_path / objective)["folder"]
     out = evaluate_dla(folders, tmp_path / "results", data_root=dla_root,
-                       settings=Settings(step_sweep=(1, 3), batch_size=4, only="p="), allow_dirty=True, device="cpu")
+                       settings=Settings(step_sweep=(1, 3), batch_size=4, only="p="), device="cpu")
     results = read_results(out)
     entries = results.manifest["entries"]
     assert list(entries) == ["edm@1", "edm@3", "flow_matching@1", "flow_matching@3"]

@@ -8,9 +8,8 @@ import json
 from dataclasses import asdict, dataclass, fields, replace
 
 TASKS = ("erosion", "dla")
-BACKBONES = ("unet", "dit")
-OBJECTIVES = ("regression", "edm", "flow_matching")
-LEVELS = (None, "coarse", "fine")
+BACKBONES = ("unet", "dit", "fno")
+OBJECTIVES = ("regression", "edm", "flow_matching", "consistency")
 DLA_CONDITIONING = ("p", "x")  # normalization.dla_conditioning
 
 
@@ -20,39 +19,52 @@ class Config:
     ``artifacts/models/<experiment>/<label>/`` (``paths.model_dir``)."""
 
     profile: str  # a readable name
-    data_profile: str  # dataset under artifacts/data/
+    data_profile: str  # dataset under artifacts/data/, such as "erosion_master/main_256" or "dla_master"
     # "erosion": snapshot pairs from datagen/ (data.ErosionPairs). "dla": cluster pairs (dla.data.DLAPairs).
     task: str = "erosion"
     backbone: str = "unet"
     # "regression": predict the target directly with MSE. "edm": sample it with an EDM denoiser
-    # (diffusion.py). "flow_matching": sample it with a flow matching model (flow.py).
+    # (objectives/edm.py). "flow_matching": sample it with a flow matching model (objectives/flow.py).
+    # "consistency": a student distilled from the EDM model at `teacher` (objectives/consistency.py).
     objective: str = "regression"
+    # Models this one is built on, as model folders (absolute, or relative to artifacts/models, such as
+    # "B2/regression"). `residual_of`: a regression model whose residual this generative model samples
+    # (residual.py, experiment B8). `teacher`: the EDM model a consistency student is distilled from.
+    residual_of: str | None = None
+    teacher: str | None = None
     # Which runs to use, as (column, condition) pairs; see table.select. Applied to train and val. Empty
     # uses every run. Example: (("fractal", "fbm"), ("index", (0, 2667))).
     data: tuple[tuple[str, object], ...] = ()
-    # Elapsed times to train on, in snapshot steps (1 = 1,000 yr in the full dataset). None uses all.
+    # Train on only the first `max_runs` of the selected runs, in table order (nested subsets, experiment
+    # B4). Validation keeps every selected run.
+    max_runs: int | None = None
+    # Elapsed times to train on, in snapshot steps (1 = one snapshot apart). None uses all.
     lags: tuple[int, ...] | None = None
-    # Edge cells change by zero, as in the simulator. False for world models, whose window edges are not
-    # boundaries.
+    # Edge cells change by zero, as in the simulator. False for world levels, whose window edges are not
+    # boundaries, and for DLA.
     fixed_edges: bool = True
-    # World level (docs/plans/infinite-plan.md, step 5). None trains on whole runs (ErosionPairs).
-    # "coarse": whole runs as block x block means (world.data.ErosionCoarse). "fine": crop x crop pieces
-    # with the true coarse change as a second input channel (world.data.ErosionCrops).
-    level: str | None = None
-    crop: int = 64
-    block: int = 4
-    # Coarse level only: crop the block means to this many coarse cells per side. None uses whole runs.
-    coarse_crop: int | None = None
-    # World levels: keep crops this many fine cells away from the run's edge, where the simulator holds
-    # heights fixed and drains water (infinite-plan step 9a).
+    # Erosion items (data.ErosionPairs). Track B: whole runs at 1 m cells (window None). Track C: a world
+    # level sees windows of `window` cells, each a `cell` × `cell` block of the 1 m runs, at least `margin`
+    # 1 m cells from the run's edge. `context_cell` is the cell size of the level above, whose true change
+    # is an extra input channel; None for the top level. `context_noise` adds noise to that channel in
+    # training (experiment C4).
+    cell: int = 1
+    window: int | None = None
+    context_cell: int | None = None
     margin: int = 0
-    # Training items per run (DLA) or per (run, start, end) pair (world levels), each with its own random
-    # draw: t and x for DLA, crop and flip for world levels.
+    context_noise: float = 0.0
+    # Training items per pair (erosion windows) or per run (DLA), each with its own random draw. `augment`
+    # flips and rotates erosion items at random.
     repeats: int = 1
+    augment: bool = False
+    # Extra erosion input channels, from data.INPUTS ("map", "drainage"), and the drainage-weighted loss
+    # exponent (experiment B7; 0 is the plain loss).
+    inputs: tuple[str, ...] = ()
+    drainage_weight: float = 0.0
     # DLA: range of the start step t, both ends included. None uses 1 to 90% of the particle count.
     t_range: tuple[int, int] | None = None
     max_train_samples: int | None = None  # train on only this many fixed pairs (for the overfit test)
-    # Model. U-Net settings apply when backbone = "unet", DiT settings when backbone = "dit" (dit.py).
+    # Model. Each backbone reads only its own settings: U-Net (model.py), DiT (dit.py), FNO (fno.py).
     channels: tuple[int, ...] = (32, 64, 128, 256)
     blocks: int = 1
     emb_dim: int = 256
@@ -63,6 +75,10 @@ class Config:
     dit_depth: int = 8
     dit_width: int = 240
     dit_heads: int = 4
+    # FNO (fno.py, the optional arm of B3): 4 layers of width 64 keeping 32 × 32 Fourier modes.
+    fno_modes: int = 32
+    fno_width: int = 64
+    fno_depth: int = 4
     # Optimization
     batch_size: int = 32
     lr: float = 3e-4
@@ -89,26 +105,31 @@ class Config:
         for name, allowed in (("task", TASKS), ("backbone", BACKBONES)):
             if getattr(self, name) not in allowed:
                 raise ValueError(f"{name} must be one of {allowed}, got {getattr(self, name)!r}")
-        if self.task == "dla" and (self.level is not None or self.fixed_edges):
-            raise ValueError("DLA models have no world level and no fixed edges")
+        if self.task == "dla" and self.fixed_edges:
+            raise ValueError("DLA models have no fixed edges")
+        if self.window is not None and self.fixed_edges:
+            raise ValueError("window items are crops whose edges are not boundaries: set fixed_edges=False")
         if self.objective not in OBJECTIVES:
             raise ValueError(f"objective must be one of {OBJECTIVES}, got {self.objective!r}")
-        if self.level not in LEVELS:
-            raise ValueError(f"level must be one of {LEVELS}, got {self.level!r}")
-        if self.margin % self.block:
-            raise ValueError("margin must be a multiple of block")
+        if self.residual_of is not None and self.objective not in ("edm", "flow_matching"):
+            raise ValueError("a residual model samples the residual: use edm or flow_matching")
+        if (self.objective == "consistency") != (self.teacher is not None):
+            raise ValueError("a consistency student needs a teacher, and only a consistency student takes one")
+        if self.context_cell is not None and self.context_cell % self.cell:
+            raise ValueError("context_cell must be a multiple of cell")
 
     @property
     def cond_dim(self) -> int:
         """Length of the conditioning vector."""
-        from .normalization import PARAMETER_NAMES
+        from .data.normalization import PARAMETER_NAMES
 
         return len(DLA_CONDITIONING) if self.task == "dla" else len(PARAMETER_NAMES)
 
     @property
     def in_channels(self) -> int:
-        """Input channels besides the noisy target: the start heightmap, plus the coarse change at the fine level."""
-        return 2 if self.level == "fine" else 1
+        """Input channels besides the noisy target: the start terrain (or DLA cluster), the extra inputs,
+        and the context channel of a level with a parent."""
+        return 1 + len(self.inputs) + (self.context_cell is not None)
 
 
 PROFILES = {
@@ -182,11 +203,16 @@ def config_to_json(cfg: Config) -> dict:
     return {k: _to_json(v) for k, v in asdict(cfg).items()}
 
 
-def config_from_json(values: dict) -> Config:
-    """The inverse of ``config_to_json``. Fields missing from ``values`` (added since it was written) take
-    their defaults; fields no longer in ``Config`` are dropped."""
+def config_from_dict(values: dict) -> Config:
+    """A ``Config`` from saved fields, as in a checkpoint. Fields missing from ``values`` (added since it was
+    saved) take their defaults; fields no longer in ``Config`` are dropped."""
     known = {f.name for f in fields(Config)}
-    return Config(**{k: _from_json(v) for k, v in values.items() if k in known})
+    return Config(**{k: v for k, v in values.items() if k in known})
+
+
+def config_from_json(values: dict) -> Config:
+    """The inverse of ``config_to_json``, with ``config_from_dict``'s handling of added and removed fields."""
+    return config_from_dict({k: _from_json(v) for k, v in values.items()})
 
 
 def training_differences(stored: Config, requested: Config) -> list[str]:

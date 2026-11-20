@@ -1,5 +1,5 @@
 """The DLA evaluation suite: every DLA metric for some models on the test split, written as a results
-folder (``results.py``).
+folder (``experiments/results.py``).
 
 Test conditions, from the test split's run table (``dla/data.py``):
 
@@ -30,10 +30,10 @@ from pathlib import Path
 
 import numpy as np
 
-from ..diffusion import DEFAULT_STEPS
-from ..results import write_results
-from ..sampling import network_calls
-from ..train import load_checkpoint
+from ..experiments.results import write_results
+from ..objectives.edm import DEFAULT_STEPS
+from ..objectives.sampling import network_calls
+from ..training.checkpoints import load_checkpoint
 from . import metrics
 from .data import NO_START, DLASplit
 from .sample import grow
@@ -73,7 +73,7 @@ def conditions(test: DLASplit) -> list[Condition]:
 
 
 def evaluate_dla(models: dict[str, Path], out: Path, data_profile: str | None = None, data_root: Path | None = None,
-                 settings: Settings = Settings(), allow_dirty: bool = False, device: str | None = None) -> Path:
+                 settings: Settings = Settings(), device: str | None = None) -> Path:
     """Score each model (label -> model folder) on every test condition and write the results to ``out``.
 
     The test split is ``data_profile``'s (default: the first model's training dataset). ``data_root``
@@ -134,7 +134,7 @@ def evaluate_dla(models: dict[str, Path], out: Path, data_profile: str | None = 
         "conditions": [c.name for c in conds],
         "settings": asdict(settings),
     }
-    return write_results(out, scalars, arrays, examples, manifest, allow_dirty=allow_dirty)
+    return write_results(out, scalars, arrays, examples, manifest)
 
 
 @dataclass(frozen=True)
@@ -160,7 +160,7 @@ def missing_fraction(small: np.ndarray, large: np.ndarray) -> np.ndarray:
 
 def evaluate_agreement(models: dict[str, Path], out: Path, data_profile: str | None = None,
                        data_root: Path | None = None, settings: AgreementSettings = AgreementSettings(),
-                       allow_dirty: bool = False, device: str | None = None) -> Path:
+                       device: str | None = None) -> Path:
     """Agreement across steps (experiment A6), written as a results folder.
 
     - Containment: from each start, samples at every jump size share one noise key. For every pair of
@@ -237,4 +237,4 @@ def evaluate_agreement(models: dict[str, Path], out: Path, data_profile: str | N
         "jumps": jumps,
         "settings": asdict(settings),
     }
-    return write_results(out, scalars, arrays, examples, manifest, allow_dirty=allow_dirty)
+    return write_results(out, scalars, arrays, examples, manifest)

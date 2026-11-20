@@ -2,15 +2,15 @@
 
 Run it, then open the printed address:
 
-    uv run python -m erosion_sim.world.viewer              # loads artifacts/checkpoints/diffusion-world_*.pt
-    uv run python -m erosion_sim.world.viewer --steps 32   # full sampler steps: slower, as in the notebook
+    uv run python -m erosion_sim.world.viewer --models artifacts/models/C1/coarse artifacts/models/C1/fine
+    uv run python -m erosion_sim.world.viewer --models ... --steps 32   # full sampler steps: slower
 
 The page (``viewer.html``) is a Leaflet map with two layers of 256-pixel tiles:
 
 - The starting terrain, everywhere and at any zoom. It is plain noise, so it renders at once.
 - On top, the eroded terrain (or ``Δz``), computed by the world as tiles come into view: about 1 to 3 s
-  per new tile on a GPU. Zoomed in (1 and 2 m per pixel) it comes from the fine level, zoomed out
-  (4 and 8 m per pixel) from the coarse level. Further out, only the starting terrain shows.
+  per new tile on a GPU. Each zoom reads the coarsest level whose cells are no wider than a pixel.
+  Further out, only the starting terrain shows.
 
 The page keeps its own queue: at most two eroded tiles are computed at a time, nearest the view center
 first, and tiles that leave the view are dropped. Colors and shading use fixed ranges, so neighboring
@@ -35,8 +35,7 @@ import numpy as np
 from erosion_terrain import Terrain
 from matplotlib import colormaps
 
-from ..paths import checkpoint_path
-from .data import block_mean, coarse_heights
+from ..data.pairs import block_mean
 from .world import World, load_levels
 
 TILE = 256
@@ -98,13 +97,13 @@ def client_gone(connection: socket.socket) -> bool:
 class Tiles:
     """Builds worlds on demand and renders their tiles.
 
-    ``levels`` are the two levels' ``(model, scaling, config)``, from ``load_levels``. ``keep`` worlds
-    (one per seed, parameters, and ``dT``) stay cached.
+    ``levels`` are every level's ``(model, scaling, config)``, coarsest first, from ``load_levels``. ``keep``
+    worlds (one per seed, parameters, and ``dT``) stay cached.
     """
 
     def __init__(self, levels: list[tuple], steps: int, bf16: bool, batch_size: int, keep: int = 4):
         self.levels = list(levels)
-        self.block = self.levels[1][2].block
+        self.cells = [cfg.cell for _, _, cfg in self.levels]
         self.sampler = {"steps": steps, "bf16": bf16, "batch_size": batch_size}
         self.worlds: OrderedDict = OrderedDict()
         self.keep = keep
@@ -117,8 +116,8 @@ class Tiles:
             self.worlds.move_to_end(key)
             return self.worlds[key]
         s = settings
-        world = World(int(s["seed"]), s["dT"], *self.levels, K_ref=s["K_ref"], D=s["K_ref"] * s["D_over_K"],
-                      m=s["m"], persistence=s["persistence"], **self.sampler)
+        world = World(int(s["seed"]), s["dT"], self.levels, K_ref=s["K_ref"], D=s["K_ref"] * s["D_over_K"],
+                      m=s["m"], terrain=Terrain(int(s["seed"]), persistence=s["persistence"]), **self.sampler)
         self.worlds[key] = world
         if len(self.worlds) > self.keep:
             self.worlds.popitem(last=False)
@@ -127,17 +126,15 @@ class Tiles:
     def grid(self, world: World, pixel: int, y0: int, x0: int, n: int) -> tuple[np.ndarray, np.ndarray]:
         """``(start, change)`` (m) on ``n`` × ``n`` cells ``pixel`` m wide, starting at meter (``y0``, ``x0``).
 
-        Below ``block`` m per pixel this reads the fine level, otherwise the coarse level (``block`` m cells),
-        averaging its cells down to the pixel size.
+        Reads the coarsest level whose cells are no wider than a pixel, averaging its cells down to the
+        pixel size.
         """
-        unit = 1 if pixel < self.block else self.block  # meters per cell of the level used
-        factor, cy, cx = pixel // unit, y0 // unit, x0 // unit
+        k = max(i for i, cell in enumerate(self.cells) if cell <= max(pixel, self.cells[-1]))
+        unit = self.cells[k]  # meters per cell of the level used
+        factor, cy, cx = max(1, int(pixel // unit)), int(y0 // unit), int(x0 // unit)
         size = n * factor
-        if unit == 1:
-            start, change = world.terrain.heights(cy, cx, size, size), world.change(cy, cx, size, size)
-        else:
-            start = coarse_heights(world.terrain, cy, cx, size, size, block=self.block)
-            change = world.coarse_change(cy, cx, size, size)
+        level = world.levels[k]
+        start, change = level.terrain(cy, cx, size, size), level.change(cy, cx, size, size)
         if factor > 1:
             start, change = block_mean(start, factor), block_mean(change, factor)
         return start, change
@@ -203,7 +200,7 @@ def make_handler(tiles: Tiles):
                 elif url.path == "/config":
                     config = {"defaults": DEFAULTS, "layers": LAYERS, "min_zoom": MIN_ZOOM,
                               "min_model_zoom": MIN_MODEL_ZOOM, "max_native_zoom": MAX_NATIVE_ZOOM,
-                              "block": tiles.block, "steps": tiles.sampler["steps"]}
+                              "cells": tiles.cells, "steps": tiles.sampler["steps"]}
                     self.send(json.dumps(config).encode(), "application/json")
                 elif url.path == "/status":
                     self.send(json.dumps(tiles.report()).encode(), "application/json")
@@ -252,8 +249,8 @@ def make_handler(tiles: Tiles):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--coarse", type=Path, default=checkpoint_path("world_coarse", "diffusion"))
-    parser.add_argument("--fine", type=Path, default=checkpoint_path("world_fine", "diffusion"))
+    parser.add_argument("--models", type=Path, nargs="+", required=True,
+                        help="model folders of the world's levels, coarsest first")
     parser.add_argument("--device", default=None, help="cuda or cpu; default cuda if available")
     parser.add_argument("--steps", type=int, default=16, help="sampler steps per level (the notebook uses 32)")
     parser.add_argument("--fp32", action="store_true", help="run the models in 32-bit instead of 16-bit")
@@ -261,7 +258,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
-    tiles = Tiles(load_levels(args.coarse, args.fine, args.device), args.steps, not args.fp32, args.batch_size)
+    tiles = Tiles(load_levels(args.models, args.device), args.steps, not args.fp32, args.batch_size)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(tiles))
     server.daemon_threads = True
     print(f"world viewer at http://{args.host}:{args.port}  (Ctrl-C to stop)", flush=True)

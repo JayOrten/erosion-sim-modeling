@@ -1,6 +1,6 @@
 import torch
 
-from erosion_sim.model import UNet
+from erosion_sim.models.unet import UNet
 
 COND = 5
 

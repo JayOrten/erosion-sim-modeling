@@ -1,14 +1,14 @@
 import numpy as np
-
-from erosion_sim.world.data import block_mean, coarse_heights
 from erosion_terrain import Terrain
+
+from erosion_sim.data.pairs import block_mean
 
 
 def test_overlapping_queries_agree():
     terrain = Terrain(seed=7)
     big = terrain.heights(-40, 99_992, 80, 60)
     np.testing.assert_array_equal(terrain.heights(-3, 100_000, 21, 30), big[37:58, 8:38])
-    np.testing.assert_array_equal(coarse_heights(terrain, -10, 24_998, 20, 15), block_mean(big))
+    np.testing.assert_array_equal(block_mean(terrain.heights(-40, 99_992, 80, 60), 4), block_mean(big, 4))
     assert not np.array_equal(big, Terrain(seed=8).heights(-40, 99_992, 80, 60))
 
 

@@ -158,7 +158,10 @@ function updateStatus() {
   let level;
   if (layer === "start") level = "starting terrain";
   else if (zoom < config.min_model_zoom) level = `<span class="warn">zoom in to ${2 ** -config.min_model_zoom} m/px or closer to see erosion</span>`;
-  else level = pixel < config.block ? "fine level" : "coarse level";
+  else {
+    const cell = Math.max(...config.cells.filter((c) => c <= Math.max(pixel, Math.min(...config.cells))));
+    level = `${cell} m level`;
+  }
   const pending = slow.count;
   const busy = pending ? ` · <span class="busy">${pending} eroded tile${pending > 1 ? "s" : ""} to compute</span>` : "";
   document.getElementById("status").innerHTML = `${where}${pixel} m/px · ${level}${busy}`;

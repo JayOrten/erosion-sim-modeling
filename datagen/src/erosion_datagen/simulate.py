@@ -21,103 +21,104 @@ with warnings.catch_warnings():
         "ignore", UserWarning
     )  # richdem imports the deprecated pkg_resources
     import richdem
-from erosion_terrain import SEED_LIMIT, TERRAIN_FIELDS, Terrain
+from erosion_terrain import SEED_LIMIT, TERRAIN_FIELDS, Terrain, map_from_columns
 from landlab import RasterModelGrid
 from landlab.components import FastscapeEroder, FlowAccumulator, LinearDiffuser
 from landlab.utils.suppress_output import suppress_output
 
-from .config import ARTIFACTS_DIR, Config
-
-# Columns of the Latin hypercube, in order.
-PARAMS = ("K_ref", "D", "m", "U", "period", "persistence")
+from .config import ARTIFACTS_DIR, OOD_RANGES, Group
 
 
-def keyed_rng(
-    cfg: Config, split: str, role: str, index: int | None = None
-) -> np.random.Generator:
-    """Derive an independent, stable random stream from a canonical JSON record."""
-    payload = json.dumps(
-        ["erosion-datagen-v1", cfg.profile, split, role, index], separators=(",", ":")
-    ).encode()
-    key = int.from_bytes(hashlib.sha256(payload).digest()[:8], "little")
-    return np.random.Generator(np.random.PCG64(key))
+def run_seed(group: Group, split: str, index: int) -> int:
+    """A run's 63-bit seed: SHA-256 of (dataset, group, split, index) as canonical JSON. It seeds the
+    run's PCG64 stream, from which every column of the run is drawn."""
+    payload = json.dumps(["erosion-datagen-v2", group.dataset, group.name, split, int(index)],
+                         separators=(",", ":")).encode()
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "little") >> 1
 
 
-def latin_hypercube(rng: np.random.Generator, n: int, dims: int) -> np.ndarray:
-    """``n`` points in [0, 1)^dims. Each dimension has exactly one point in each of its ``n`` equal slices."""
-    slices = np.stack([rng.permutation(n) for _ in range(dims)], axis=1)
-    return (slices + rng.random((n, dims))) / n
+def _log_uniform(rng: np.random.Generator, low_high: tuple[float, float]) -> float:
+    low, high = low_high
+    return float(np.exp(rng.uniform(np.log(low), np.log(high))))
 
 
-def _log_uniform(u: np.ndarray, low: float, high: float) -> np.ndarray:
-    return np.exp(np.log(low) + u * (np.log(high) - np.log(low)))
+def draw_run(group: Group, split: str, index: int) -> dict:
+    """Every column of one run, drawn from its own stream (``run_seed``). Each column is independent.
 
-
-def sample_params(cfg: Config, split: str) -> dict[str, np.ndarray]:
-    """Draw every run's parameters for one split: one array per erosion parameter and per terrain field.
-
-    The erosion parameters, ``period``, and ``persistence`` come from Latin Hypercube Sampling; the other
-    terrain fields from ``terrain_kind``; the seed from its own stream per run.
+    Every draw happens in a fixed order whether or not the run uses it (a warp strength for an unwarped
+    run, say), so one setting never shifts another's draws.
     """
-    n = cfg.runs(split)
-    u = latin_hypercube(keyed_rng(cfg, split, "params"), n, len(PARAMS))
-    K_ref = _log_uniform(u[:, 0], *cfg.K_ref)
-    m = cfg.m[0] + u[:, 2] * (cfg.m[1] - cfg.m[0])
-    # The uplift column picks no uplift for its lowest U_zero_fraction, then spreads the rest over U_over_K.
-    uplifted = u[:, 3] >= cfg.U_zero_fraction
-    u_rest = (u[:, 3] - cfg.U_zero_fraction) / max(1 - cfg.U_zero_fraction, 1e-12)
-    return {
-        "K": erodibility(cfg, K_ref, m),
-        "K_ref": K_ref,
-        "D": K_ref * _log_uniform(u[:, 1], *cfg.D_over_K),
-        "m": m,
-        "U": np.where(
-            uplifted, K_ref * _log_uniform(np.clip(u_rest, 0, 1), *cfg.U_over_K), 0.0
-        ),
-        "period": _log_uniform(u[:, 4], *cfg.period),
-        "persistence": cfg.persistence[0]
-        + u[:, 5] * (cfg.persistence[1] - cfg.persistence[0]),
-        "seed": np.array(
-            [keyed_rng(cfg, split, "terrain", i).integers(SEED_LIMIT) for i in range(n)]
-        ),
-    } | terrain_kind(cfg, split, n)
-
-
-def erodibility(cfg: Config, K_ref, m):
-    """The K the simulator uses: K_ref rescaled so a channel draining cfg.A_ref erodes at the same rate for any m."""
-    return K_ref * cfg.A_ref ** (cfg.m_ref - m)
-
-
-def terrain_kind(cfg: Config, split: str, n: int) -> dict[str, np.ndarray]:
-    """Each run's noise type, fractal type, octaves, lacunarity, warp, and height (m per unit of noise).
-
-    Settings the profile does not vary come out as its fixed values. Noise and fractal types are names,
-    as ``Terrain`` takes them. Drawn from their own random stream.
-    """
-    rng = keyed_rng(cfg, split, "terrain-kind")
-    out = {
-        "noise": np.array(cfg.noise_types)[rng.integers(len(cfg.noise_types), size=n)],
-        "fractal": np.array(cfg.fractal_types)[rng.integers(len(cfg.fractal_types), size=n)],
-        "octaves": (
-            rng.integers(cfg.octave_range[0], cfg.octave_range[1] + 1, size=n)
-            if cfg.octave_range
-            else np.full(n, cfg.octaves)
-        ),
-        "lacunarity": rng.uniform(*cfg.lacunarity_range, size=n)
-        if cfg.lacunarity_range
-        else np.full(n, cfg.lacunarity),
-        "height": _log_uniform(rng.uniform(size=n), *cfg.height_range)
-        if cfg.height_range
-        else np.full(n, cfg.height),
+    seed = run_seed(group, split, index)
+    rng = np.random.Generator(np.random.PCG64(seed))
+    noise = str(rng.choice(group.noise_types))
+    fractal = str(rng.choice(group.fractal_types))
+    warped = rng.uniform() < group.warp_fraction
+    warp = float(rng.uniform(*group.warp))
+    row = {
+        "seed": int(rng.integers(SEED_LIMIT)),  # the noise seed (erosion_terrain.Terrain.seed)
+        "period": _log_uniform(rng, group.period),
+        "persistence": float(rng.uniform(*group.persistence)),
+        "octaves": int(rng.integers(group.octaves[0], group.octaves[1] + 1)),
+        "lacunarity": float(rng.uniform(*group.lacunarity)),
+        "height": _log_uniform(rng, group.height),
+        "noise": noise,
+        "fractal": fractal,
+        "warp": warp if warped else 0.0,
     }
-    warped = rng.uniform(size=n) < cfg.warp_fraction
-    out["warp"] = np.where(warped, rng.uniform(*cfg.warp, size=n), 0.0)
-    return out
+    ranges = {"K_ref": group.K_ref, "D_over_K": group.D_over_K}
+    m_range, ood_param = group.m, ""
+    if group.ood:
+        ood_param, out_of_range = OOD_RANGES[index % len(OOD_RANGES)]
+        if ood_param == "m":
+            m_range = out_of_range
+        else:
+            ranges[ood_param] = out_of_range
+    K_ref = _log_uniform(rng, ranges["K_ref"])
+    D_over_K = _log_uniform(rng, ranges["D_over_K"])
+    m = float(rng.uniform(*m_range))
+    shapes, shares = zip(*group.maps)
+    shape = shapes[int(np.searchsorted(np.cumsum(shares), rng.uniform() * sum(shares), side="right"))]
+    contrast = _log_uniform(rng, group.map_contrast)
+    map_period = _log_uniform(rng, group.map_period)
+    band_width = _log_uniform(rng, group.band_width)
+    band_angle = float(rng.uniform(0.0, 180.0))
+    map_seed = int(rng.integers(SEED_LIMIT))
+    return row | {
+        "K_ref": K_ref,
+        "K": erodibility(group, K_ref, m),
+        "D": K_ref * D_over_K,
+        "m": m,
+        "U": 0.0,
+        "ood_param": ood_param,
+        "map_shape": shape,
+        "map_contrast": contrast if shape != "uniform" else 1.0,
+        "map_period": map_period,
+        "band_width": band_width,
+        "band_angle": band_angle,
+        "map_seed": map_seed,
+    }
 
 
-def run_terrain(p: dict) -> Terrain:
-    """The ``Terrain`` of one run, from its entry of ``sample_params`` (a dict of scalars)."""
-    return Terrain(**{name: np.asarray(p[name]).item() for name in TERRAIN_FIELDS})
+def plan_split(group: Group, split: str) -> dict[str, np.ndarray]:
+    """The run table of one (group, split) before simulating: one array per column, one row per run.
+
+    Columns: ``group``, ``split``, ``index``, ``run_seed``, and every column of ``draw_run``.
+    """
+    n = group.runs(split)
+    rows = [draw_run(group, split, i) for i in range(n)]
+    columns = {name: np.array([row[name] for row in rows]) for name in rows[0]} if rows else {}
+    return {"group": np.full(n, group.name), "split": np.full(n, split), "index": np.arange(n),
+            "run_seed": np.array([run_seed(group, split, i) for i in range(n)], dtype=np.int64)} | columns
+
+
+def erodibility(group: Group, K_ref, m):
+    """The K the simulator uses: K_ref rescaled so a channel draining A_ref erodes at the same rate for any m."""
+    return K_ref * group.A_ref ** (group.m_ref - m)
+
+
+def run_terrain(row: dict) -> Terrain:
+    """The ``Terrain`` of one run, from its run-table row (a dict of scalars)."""
+    return Terrain(**{name: np.asarray(row[name]).item() for name in TERRAIN_FIELDS})
 
 
 def fill_pits(z: np.ndarray) -> np.ndarray:
@@ -155,11 +156,13 @@ def simulate(
     steps: int,
     snapshot_every: int,
     cell_size: float = 1.0,
+    K_map: np.ndarray | None = None,
 ) -> np.ndarray:
     """Erode the 2D surface ``z0``. Return snapshots at steps 0, snapshot_every, 2 * snapshot_every, ...
 
     Each step: uplift interior nodes by ``U * dt``, route water over the pit-filled surface, cut channels
-    (stream power law with n = 1), and diffuse hillslopes. Edges are open and keep their height.
+    (stream power law with n = 1, erodibility ``K * K_map`` per cell), and diffuse hillslopes. Edges are
+    open and keep their height. ``K_map`` (same shape as ``z0``) defaults to 1 everywhere.
     """
     if steps % snapshot_every:
         raise ValueError("steps must be a multiple of snapshot_every")
@@ -169,7 +172,8 @@ def simulate(
     )
     filled = grid.add_field("filled__elevation", z.copy(), at="node")
     flow = FlowAccumulator(grid, surface="filled__elevation", flow_director="D8")
-    incision = FastscapeEroder(grid, K_sp=K, m_sp=m, n_sp=1.0)
+    K_sp = K if K_map is None else K * np.asarray(K_map, dtype=np.float64).ravel()
+    incision = FastscapeEroder(grid, K_sp=K_sp, m_sp=m, n_sp=1.0)
     diffusion = LinearDiffuser(grid, linear_diffusivity=D)
 
     snapshots = np.empty((steps // snapshot_every + 1, *z0.shape), dtype=np.float32)
@@ -185,62 +189,54 @@ def simulate(
     return snapshots
 
 
-def _run_one(task: tuple[Config, int, dict]) -> tuple[int, np.ndarray]:
-    cfg, index, p = task
-    z0 = run_terrain(p).heights(0, 0, *cfg.shape)
-    snapshots = simulate(
-        z0,
-        p["K"],
-        p["D"],
-        p["m"],
-        p["U"],
-        dt=cfg.dt,
-        steps=cfg.steps,
-        snapshot_every=cfg.snapshot_every,
-        cell_size=cfg.cell_size,
-    )
+def _run_one(task: tuple[Group, int, dict]) -> tuple[int, np.ndarray]:
+    group, index, row = task
+    z0 = run_terrain(row).heights(0, 0, group.size, group.size)
+    K_map = map_from_columns(row).factors(0, 0, group.size, group.size)
+    snapshots = simulate(z0, row["K"], row["D"], row["m"], row["U"], dt=group.dt, steps=group.steps,
+                         snapshot_every=group.snapshot_every, cell_size=group.cell_size, K_map=K_map)
     return index, snapshots
 
 
-def run_many(cfg: Config, params: dict[str, np.ndarray], indices=None):
-    """Simulate one run per entry of ``params`` in parallel. Yield ``(index, snapshots)`` as runs finish.
-
-    ``params`` holds equal-length arrays with the keys returned by ``sample_params``. ``indices`` limits
-    the runs to those; None runs all.
-    """
-    indices = range(len(params["K"])) if indices is None else list(indices)
-    tasks = [(cfg, i, {k: v[i] for k, v in params.items()}) for i in indices]
+def run_many(group: Group, columns: dict[str, np.ndarray], indices=None):
+    """Simulate one run per row of ``columns`` (a run table from ``plan_split``) in parallel. Yield
+    ``(index, snapshots)`` as runs finish. ``indices`` limits the runs to those; None runs all."""
+    indices = range(len(columns["index"])) if indices is None else list(indices)
+    tasks = [(group, i, {k: v[i] for k, v in columns.items()}) for i in indices]
     if not tasks:
         return
-    processes = min(cfg.processes or os.cpu_count() or 1, len(tasks))
+    processes = min(group.processes or os.cpu_count() or 1, len(tasks))
     # Spawned workers start fresh, so they see OMP_NUM_THREADS before Landlab loads.
     with multiprocessing.get_context("spawn").Pool(processes) as pool:
         yield from pool.imap_unordered(_run_one, tasks)
 
 
-def dataset_dir(cfg: Config, split: str) -> Path:
-    return ARTIFACTS_DIR / "data" / cfg.profile / split
+def dataset_dir(group: Group, split: str) -> Path:
+    """``artifacts/data/<dataset>/<group>/<split>``."""
+    return ARTIFACTS_DIR / "data" / group.dataset / group.name / split
 
 
 def make_dataset(
-    cfg: Config,
+    group: Group,
     split: str,
     out_dir: Path | None = None,
     progress_every: int = 0,
     progress: Callable[[int, int], None] | None = None,
 ) -> Path:
-    """Simulate every run of one split and write it to ``out_dir``. Return ``out_dir``.
+    """Simulate every run of one (group, split) and write it to ``out_dir`` (default ``dataset_dir``).
+    Return ``out_dir``.
 
     Files written:
 
     - ``snapshots.npy``: float32, shape (runs, snapshots, rows, cols). Written as a memory map, so
       readers can load it lazily with ``np.load(path, mmap_mode="r")``.
-    - ``runs.npz``: the run table. One array of length ``runs`` per column: ``index`` (the run's position
-      in the split), each erosion parameter (``K``, ``K_ref``, ``D``, ``m``, ``U``), and each ``Terrain``
-      field (``seed``, ``period``, ``persistence``, ``octaves``, ``lacunarity``, ``height``, ``noise``,
-      ``fractal``, ``warp``; noise and fractal as names).
-    - ``meta.json``: the config, the snapshot ``times`` (yr), and package versions. Written last, so it
-      marks a finished split.
+    - ``runs.npz``: the run table (``plan_split``). One array of length ``runs`` per column: ``group``,
+      ``split``, ``index``, ``run_seed``; each ``Terrain`` field (``seed`` is the noise seed); the erosion
+      parameters ``K_ref``, ``K``, ``D``, ``m``, ``U`` (0), and ``ood_param`` ("" unless an ood group);
+      and the erodibility map columns ``map_shape``, ``map_contrast``, ``map_period``, ``band_width``,
+      ``band_angle``, ``map_seed`` (``erosion_terrain.map_from_columns``).
+    - ``meta.json``: the group settings, the snapshot ``times`` (yr), and package versions. Written
+      last, so it marks a finished split.
 
     Resumable: while it runs, ``progress.json`` holds the settings and the runs already on disk (each
     added only after its snapshots are flushed). Called again after an interruption, with the same
@@ -250,17 +246,16 @@ def make_dataset(
     ``progress(done, total)`` is called after each run is saved, and ``progress_every`` > 0 prints a line
     every that many runs.
     """
-    out_dir = Path(out_dir) if out_dir is not None else dataset_dir(cfg, split)
+    out_dir = Path(out_dir) if out_dir is not None else dataset_dir(group, split)
     out_dir.mkdir(parents=True, exist_ok=True)
-    params = sample_params(cfg, split)
-    n = cfg.runs(split)
-    snapshot_count = cfg.steps // cfg.snapshot_every + 1
-    times = np.arange(snapshot_count) * cfg.snapshot_every * cfg.dt
-    shape = (n, snapshot_count, *cfg.shape)
+    columns = plan_split(group, split)
+    n = group.runs(split)
+    times = np.arange(group.snapshots) * group.snapshot_every * group.dt
+    shape = (n, group.snapshots, group.size, group.size)
 
     path, record = out_dir / "snapshots.npy", out_dir / "progress.json"
     settings = json.loads(
-        json.dumps({"config": vars(cfg), "split": split, "shape": shape})
+        json.dumps({"config": vars(group), "split": split, "shape": shape})
     )
     done: list[int] = []
     if path.exists() and record.exists():
@@ -294,7 +289,7 @@ def make_dataset(
     if progress:
         progress(len(done), n)
     for index, result in run_many(
-        cfg, params, [i for i in range(n) if i not in finished]
+        group, columns, [i for i in range(n) if i not in finished]
     ):
         snapshots[index] = result
         snapshots.flush()
@@ -312,9 +307,9 @@ def make_dataset(
     snapshots.flush()
     del snapshots
 
-    np.savez(out_dir / "runs.npz", index=np.arange(n), **params)
+    np.savez(out_dir / "runs.npz", **columns)
     meta = {
-        "config": {k: v for k, v in vars(cfg).items()},
+        "config": {k: v for k, v in vars(group).items()},
         "split": split,
         "times": times.tolist(),
         "versions": {
@@ -327,6 +322,42 @@ def make_dataset(
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
     record.unlink()
     return out_dir
+
+
+def _run_chunk(task: tuple[Group, int, dict, int, int, int]) -> tuple[int, int, int, np.ndarray]:
+    group, index, row, y0, x0, chunk = task
+    z0 = run_terrain(row).heights(y0, x0, chunk, chunk)
+    K_map = map_from_columns(row).factors(y0, x0, chunk, chunk)
+    snapshots = simulate(z0, row["K"], row["D"], row["m"], row["U"], dt=group.dt, steps=group.steps,
+                         snapshot_every=group.snapshot_every, cell_size=group.cell_size, K_map=K_map)
+    return index, y0, x0, snapshots
+
+
+def make_chunked(group: Group, split: str, chunk: int, out_dir: Path | None = None, progress_every: int = 0) -> Path:
+    """Simulate every run of an existing split again as separate closed ``chunk``² pieces, stitched: the
+    "independent chunks" baseline of experiment C8. Each chunk's fixed edges are outlets the run does not
+    have. Writes ``chunked_<chunk>.npy`` next to the split's ``snapshots.npy``, with the same shape."""
+    out_dir = Path(out_dir) if out_dir is not None else dataset_dir(group, split)
+    if group.size % chunk:
+        raise ValueError(f"{group.size}² runs do not split into {chunk}² chunks")
+    with np.load(out_dir / "runs.npz") as f:
+        columns = dict(f)
+    n = len(columns["index"])
+    path = out_dir / f"chunked_{chunk}.npy"
+    tmp = path.with_suffix(".partial.npy")
+    out = np.lib.format.open_memmap(tmp, mode="w+", dtype=np.float32, shape=(n, group.snapshots, group.size, group.size))
+    tasks = [(group, i, {k: v[i] for k, v in columns.items()}, y, x, chunk)
+             for i in range(n) for y in range(0, group.size, chunk) for x in range(0, group.size, chunk)]
+    processes = min(group.processes or os.cpu_count() or 1, len(tasks))
+    with multiprocessing.get_context("spawn").Pool(processes) as pool:
+        for done, (i, y, x, snaps) in enumerate(pool.imap_unordered(_run_chunk, tasks), start=1):
+            out[i, :, y:y + chunk, x:x + chunk] = snaps
+            if progress_every and done % progress_every == 0:
+                print(f"{group.name}/{split} chunks: {done}/{len(tasks)}", flush=True)
+    out.flush()
+    del out
+    tmp.replace(path)
+    return path
 
 
 def load_dataset(path: Path) -> tuple[np.ndarray, dict[str, np.ndarray], dict]:

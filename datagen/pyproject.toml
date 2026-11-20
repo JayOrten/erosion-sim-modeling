@@ -20,6 +20,9 @@ dependencies = [
     "setuptools<81",
 ]
 
+[project.scripts]
+erosion-datagen = "erosion_datagen.cli:main"
+
 [dependency-groups]
 dev = [
     "ipykernel>=6.0",

@@ -1,11 +1,10 @@
 import numpy as np
 import torch
+from conftest import RUNS, SIZE, SNAPS
 from torch.utils.data import DataLoader
 
-from erosion_sim.data import ErosionPairs
-from erosion_sim.normalization import PARAMETER_NAMES
-
-from conftest import RUNS, SIZE, SNAPS
+from erosion_sim.data.normalization import PARAMETER_NAMES
+from erosion_sim.data.pairs import ErosionPairs
 
 
 def test_items_have_expected_shapes_and_round_trip(dataset, scaling):

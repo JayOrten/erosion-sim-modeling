@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import torch
 
-from erosion_sim.data import Split
-from erosion_sim.normalization import Scaling
+from erosion_sim.data.normalization import Scaling
+from erosion_sim.data.splits import Split
 
 # The test models are tiny. Many CPU threads only contend with each other (and with anything else running),
 # which made the suite over 20 times slower.

@@ -1,39 +1,23 @@
 """Command-line entry point, ``erosion-sim``. Each subcommand runs one stage; the Slurm scripts call them.
 
-- ``erosion-sim list``: the registered experiments (``experiments.py``) and their models.
+- ``erosion-sim list``: the registered experiments (``experiments/registry.py``) and their models.
 - ``erosion-sim submit <experiment> [--dry-run] [--force-evaluate]``: from the login node, submit the
   experiment's training jobs and its evaluation job (``runner.submit``).
 - ``erosion-sim train <experiment> <model>``: train one model of an experiment, resuming if it was
   interrupted. Does nothing if it is finished.
-- ``erosion-sim evaluate <experiment> [--allow-dirty]``: run the experiment's suite, writing
+- ``erosion-sim evaluate <experiment>``: run the experiment's suite, writing
   ``artifacts/results/<experiment>/``.
 - ``erosion-sim dla-generate <profile> [split ...]``: simulate DLA splits (``dla/data.py``). Runs
   locally; the DLA data is small and fast.
 """
 
 import argparse
-import os
-import sys
-
-
-def check_commit() -> None:
-    """Inside a submitted job, fail unless the repo is still at the commit the job was submitted with
-    (``EROSION_COMMIT``) and ``src/`` has no uncommitted changes. Does nothing when the variable is unset."""
-    from .paths import git_state
-
-    expected = os.environ.get("EROSION_COMMIT")
-    if not expected:
-        return
-    state = git_state()
-    if state["commit"] != expected or state["dirty"]:
-        sys.exit(f"the job was submitted at commit {expected}, but the repo is at {state['commit']}"
-                 f"{' with uncommitted changes in src/' if state['dirty'] else ''}. Commit and resubmit.")
 
 
 def _list(args) -> None:
-    from .experiments import EXPERIMENTS, resolve
+    from .experiments.registry import EXPERIMENTS, resolve
+    from .experiments.results import results_dir
     from .paths import is_finished, model_dir
-    from .results import results_dir
 
     for name, exp in EXPERIMENTS.items():
         done = (results_dir(name) / "manifest.json").exists()
@@ -46,23 +30,21 @@ def _list(args) -> None:
 
 
 def _submit(args) -> None:
-    from .runner import submit
+    from .experiments.runner import submit
 
     submit(args.experiment, dry_run=args.dry_run, force_evaluate=args.force_evaluate)
 
 
 def _train(args) -> None:
-    from .runner import train_model
+    from .experiments.runner import train_model
 
-    check_commit()
     print(f"finished: {train_model(args.experiment, args.model)}", flush=True)
 
 
 def _evaluate(args) -> None:
-    from .runner import evaluate
+    from .experiments.runner import evaluate
 
-    check_commit()
-    print(f"wrote {evaluate(args.experiment, allow_dirty=args.allow_dirty)}", flush=True)
+    print(f"wrote {evaluate(args.experiment)}", flush=True)
 
 
 def _dla_generate(args) -> None:
@@ -96,8 +78,6 @@ def main(argv: list[str] | None = None) -> None:
 
     evaluate = commands.add_parser("evaluate", help="run an experiment's evaluation suite")
     evaluate.add_argument("experiment")
-    evaluate.add_argument("--allow-dirty", action="store_true",
-                          help="write results even if src/ has uncommitted changes (trial runs)")
     evaluate.set_defaults(run=_evaluate)
 
     dla = commands.add_parser("dla-generate", help="simulate DLA dataset splits")

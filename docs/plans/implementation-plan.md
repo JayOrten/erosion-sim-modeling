@@ -17,7 +17,7 @@ later.
   experiment and label; one experiment registry; results written to disk. Old code moves to `archive/`.
 - Data generation and training run as Slurm jobs, through command-line entry points.
 - Notebooks only read saved results and plot them. One notebook per experiment.
-- Every result can be traced to its configs, data, git commit, and Slurm job.
+- Every result can be traced to its configs, data, and Slurm job.
 
 ## Cluster setup
 
@@ -31,19 +31,20 @@ later.
 
 ## Layout after the changes
 
+The steps below name modules by the flat paths they were built at. After step 12 the package was
+regrouped into the folders below; the README lists every module.
+
 ```
 src/erosion_sim/
-  paths.py          artifacts root from EROSION_ARTIFACTS
-  table.py          run table: load, select by column
-  config.py         Config with task, backbone, objective, data selection; smoke profile only
-  runner.py         train, evaluate, or submit a registry entry
-  train.py          train(cfg), unchanged loop, new checkpoint location
-  cli.py            erosion-sim: train, evaluate, submit
-  experiments.py    registry: one entry per experiment, A1 to C9
-  results.py        write and read artifacts/results/<experiment>/
-  dla/              simulate.py, data.py, metrics.py, suite.py
-  evaluate/         erosion metrics, plus suite.py
-  world/            infinite world, plus suite.py
+  paths.py, config.py, seeding.py, cli.py
+  data/             table.py, splits.py, pairs.py, normalization.py, hydrology.py
+  models/           unet.py, dit.py, fno.py, layers.py; build_backbone
+  objectives/       edm.py (was diffusion.py), flow.py, consistency.py, residual.py, sampling.py
+  training/         train.py, checkpoints.py
+  experiments/      registry.py (was experiments.py), runner.py, results.py
+  erosion/          track B (was evaluate/): metrics.py, suite.py, plots.py, speed.py, baselines.py
+  world/            track C
+  dla/              track A
 datagen/src/erosion_datagen/
   cli.py            erosion-datagen: generate
 slurm/
@@ -148,18 +149,15 @@ collide.
   - `data`: the selection filters from step 2, replacing `runs`.
   - The erosion conditioning list (dropping `U`) and extra input channels move to step 10 and step 12,
     where the erosion recipe changes.
-- Model folders: `models/<experiment>/<label>/`. `config.json` records the full config and the git
-  commit, so a model always says what it was trained with. (A first version named folders by a hash
+- Model folders: `models/<experiment>/<label>/`. `config.json` records the full config, so a model always says what it was trained with. (A first version named folders by a hash
   of the config; it was dropped for plain names and explicit reuse, step 7.)
-- `train.py`: same loop. Saves `config.json` (with the git commit), `best.pt`, `last.pt`,
+- `train.py`: same loop. Saves `config.json`, `best.pt`, `last.pt`,
   `history.json`, and `done.json` in the model folder. Resumes from `last.pt` whenever it exists.
   Nothing plots during training.
 - `erosion-sim train <profile> [--set field=value ...]`: trains one model, resuming if interrupted, and
   does nothing if it is finished. Step 6 adds lookup by experiment and model name.
 - `slurm/train.sbatch`: one GPU, 24 hours. No requeue logic: runs are expected to finish within the
   limit. If one dies, submitting it again resumes from `last.pt`.
-- With `EROSION_COMMIT` set, a job fails unless the repo is at that commit with no uncommitted changes
-  in `src/`.
 - Old checkpoints (`objective = "diffusion"`, `runs`) no longer load. They needed retraining anyway.
 
 Check-in: a smoke DLA model trained with the job script, interrupted, and resumed to the same result as
@@ -174,8 +172,7 @@ Score a trained DLA model on every DLA metric, and save the result to disk.
   - `arrays.npz`: curves and per-sample values, keyed `<model>/<condition>/<metric>`.
   - `examples.npz`: a few start clusters, samples, and simulator outputs for figures.
   - `manifest.json`: the model folders, the test data, the conditions, the suite settings,
-    the git commit, the Slurm job ID, and the time. Writing refuses if `src/` has uncommitted changes,
-    unless `allow_dirty` is set for a trial run.
+    the Slurm job ID, and the time.
 - `dla/sample.py`: `grow` adds `x` particles to start clusters with a model, decoding at 0.5. The noise
   key per sample is `(seed, condition, index)`, the same for every model.
 - `dla/metrics.py`, one value per cluster, compared as distributions (model and simulator mean and
@@ -212,8 +209,7 @@ Run an experiment with one command, and view it in one notebook.
   - waits on a model already queued under that name, from any experiment, instead of training it twice;
   - submits `evaluate.sbatch` with `--dependency=afterok:<jobs>`, logging to the results folder, unless
     the results exist;
-  - passes `EROSION_COMMIT` to every job, and refuses if `src/` has uncommitted changes. `--dry-run`
-    prints the commands.
+  - `--dry-run` prints the commands.
 - A failed training job leaves evaluation pending. Running `submit` again resubmits only what is
   missing.
 - `erosion-sim list | submit | train <experiment> <model> | evaluate <experiment>`.
@@ -257,76 +253,76 @@ Check-in: the smoke tests, and the parameter counts against the plan's.
 
 Phase 1 track A (A1 to A6) can run after this step.
 
-### 8. Erosion data settings
+### 8. Erosion data settings (built)
 
-Change `datagen` so it makes every group of `erosion_master`.
-
-- Profiles for each group: `main_256` to `main_2048`, `ood_*`, `long_*`, `real_dem_*`.
-- Draw rules from the plan: all columns independent, the 12 noise combinations uniform, the map split
-  2/3 uniform, 1/6 patches, 1/6 bands.
-- Erodibility maps:
-  - patches and bands in `erosion_terrain`, computed from the stored settings at any world
-    coordinate;
-  - passed to the simulator as `K × map`.
-- `ood`: out-of-range draws, one parameter per run, recorded in `ood_param`.
-- `real_dem`: download and pick tiles on the login node, rescale, and store them. A run takes a stored
-  start terrain instead of noise.
-- `erosion-datagen generate <group> <split>` and `slurm/datagen.sbatch`, one job per group and split.
-  A job that hits its time limit is resubmitted and resumes.
-- Measure feature size for the 12 noise combinations, and set track C's window sizes and edge margin.
-- Time a few 2048² runs, and size `main_2048` from the measured cost.
-
-Check-in: each group generated at smoke size, a few runs of each rendered, and the cost estimate redone
-from a short timed run.
+- `Group` per entry in `datagen/config.py`: `main_256` to `main_2048` (bands 2 and 3 scaled × 2 and × 4),
+  `ood_*`, `long_*`, and two smoke groups. `real_dem_*` is deferred: it needs elevation tiles
+  downloaded and chosen first, and only B10 and C7 use it.
+- Draws: every column independent, from the run's own stream (SHA-256 of dataset, group, split, index),
+  so a run does not depend on its split's size. Replaces the old Latin Hypercube draw.
+- Erodibility maps: `erosion_terrain.ErodibilityMap` (uniform, patches, bands), computed from world
+  coordinates; the simulator uses `K × map` per cell. Columns `map_shape`, `map_contrast`, `map_period`,
+  `band_width`, `band_angle`, `map_seed`.
+- `ood`: `index % 3` picks the parameter out of range, recorded in `ood_param`.
+- `erosion-datagen list | generate | chunked` and `slurm/datagen.sbatch`.
+- Measurements (`docs/notes/datagen-measurements.md`): feature size varies 0.4 to 2.7 × the period
+  across noise types (not corrected); fixed edges change drainage across a whole run (margin fixed at
+  32 cells); one process does 4.8 M cell-steps per second at 256² and 1.6 M at 2048², about 300
+  CPU-hours for everything.
 
 ### 9. Generate the erosion data
 
-The user submits the datagen jobs, in the batches listed under Cost in `experiments-plan.md`.
+Not done: the user submits the datagen jobs. Time a short run on a cluster node first; the laptop's
+scaling across processes was poor.
 
-Check-in: every split opens, run counts and column values match the plan, disk use matches the
-estimate.
+### 10. Erosion suite (built)
 
-### 10. Erosion suite
+- `evaluate/metrics.py`: per-pair metrics (height error, erosion ratio, channel IoU, drainage area
+  error, pits per km², slope-area exponent and its error against the simulator's, change spectrum), so
+  every breakdown aggregates the same arrays.
+- `evaluate/suite.py`: the same pairs for every model; entries for baselines, models, step sweeps, pit
+  filling, and chained calls; breakdowns by noise setup, fractal, map shape, `ood_param`, `K_ref`,
+  `D/K_ref`, `m`, map contrast, and elapsed time. `evaluate/plots.py` reads the folder.
+- `hydrology.py` in Numba, with priority-flood pit filling and the slope-area fit.
+- `baselines.py`: analytical stream power (n = 1, fixed drainage network, no hillslope diffusion), and
+  the chunked and blended wrappers.
+- The old `pairs`, `rollouts`, `sweeps`, and `predict` modules are gone.
 
-Score a single-window model on every erosion metric, and add the baselines.
+### 11. World and world suite (built)
 
-- `evaluate/suite.py`: runs the existing metrics (height change error, skill, spectrum, fine detail,
-  hydrology) for one experiment, and writes the results folder. Results are broken down by noise
-  combination, map shape, parameter bins, and elapsed time, as the experiments ask.
-- New: the slope-area fit.
-- Baselines: no change, and the analytical stream power method (Tzathas et al. 2024).
-- Existing plot functions change to read the results folder.
+- `World` takes any stack of levels, coarsest first, each a window model (`cell`, `window`,
+  `context_cell`); `check_stack` validates it. Levels use `sampling`'s phases, so EDM, flow matching,
+  regression, and consistency students all work as levels.
+- Level training data is `data.ErosionPairs` with `window` (the old level datasets are gone).
+- `world/suite.py`: world benchmark on run interiors, levels alone with true context, baselines
+  (analytical whole, in chunks, blended; a track B model in chunks; the simulator in chunks from
+  `erosion-datagen chunked`), error near chunk edges, seams, and query time. Per-world sampler
+  overrides for C3.
+- `world/checks.py` keeps seams, order invariance, chunked-against-whole, and timing. The old
+  `compare` and `evaluate` modules are gone; the viewer takes model folders.
 
-Check-in: the suite on a smoke erosion model, its results folder, and its plots.
+### 12. Phase 2 and 3 additions (built)
 
-Phase 1 track B (B1 to B5) can run after this step.
+- Map and drainage input channels (`Config.inputs`), drainage-weighted loss (`drainage_weight`),
+  coarse-context noise (`context_noise`), nested data subsets (`max_runs`).
+- Residual diffusion (`residual.py`, `Config.residual_of`), consistency distillation
+  (`consistency.py`, `Config.teacher`), FNO (`fno.py`).
+- Generalization scoring: `ood` and `long` test groups through the suite settings, chained calls.
+- Every B and C experiment is registered, with a notebook (`notebooks/experiments/make_notebooks.py`).
 
-### 11. World suite and baselines
+### Built differently from the experiments plan, or not built
 
-Score the infinite world, at any number of levels, and add the chunked baselines.
-
-- The world generalized from two levels to any number, each 4 times coarser than the one below.
-- Training from interior crops with an edge margin, for any level.
-- `world/suite.py`: per-level and world metrics, seams, and consistency, written as a results folder.
-- Baselines: independent closed chunks (simulator, analytical method, track B model), and overlapping
-  analytical chunks blended with tent weights.
-
-Check-in: the suite on a smoke two-level and three-level world.
-
-Phase 2 track C (C1 to C5) can run after this step.
-
-### 12. Phase 2 and 3 additions
-
-Built when the experiment that needs them comes up, each with smoke tests first:
-
-- Erodibility map as an input channel (B6).
-- Drainage area input and drainage-weighted loss, if kept (B7).
-- Residual diffusion (B8).
-- FNO (optional arm of B3).
-- Consistency distillation (B13, C9).
-- Out-of-range, long, and real terrain scoring (B10, C7).
-- Training to convergence with three seeds (phase 3): `seed` is a config field, so each seed is its own
-  model folder.
+- B1 and C1 are split into `B1_pipeline_check` / `B1` and `C1_pipeline_check` / `C1`, since each stage
+  is scored on its own filter. B10 and C7 are split by test set.
+- The slope-area error is against the simulator's exponent on the same pair, not against `m`: on 50,000
+  yr runs the simulator's own exponent ranges about -0.4 to 0.8 for `m` 0.3 to 0.6.
+- Channel cells are the top 5% of the simulator's drainage area per pair, not over all pairs.
+- C5 band 3's 64 m level uses a 16-cell window: the plan's 64 cells (4,096 m) does not fit a 2048² run.
+  Band 2's 16 m level covers the whole 1024² run, so it has no edge margin.
+- Not built: C5's shared stack over bands 1 to 3 (it needs a dataset over several groups); chained world
+  calls in C7; B9 and C6 ablations (added once phase 2 is read); `real_dem`.
+- Consistency students need an EDM teacher; if B2 picks flow matching, B13 and C9 need another
+  distillation method.
 
 ## Open questions
 
@@ -334,7 +330,5 @@ Built when the experiment that needs them comes up, each with smoke tests first:
   `$EROSION_ARTIFACTS/results/` with rsync. Results are small either way. Locally, the notebooks never
   need the data.
 - CPU allocation for datagen: whole node or not, and how many cores. Sets `--cpus-per-task`.
-- Whether the commit check is too strict. The alternative is copying the source into each job at
-  submit time.
 - Time limit for CPU jobs. Datagen resumes after a limit, so it only changes how often jobs are
   resubmitted.

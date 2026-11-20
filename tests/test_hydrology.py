@@ -1,6 +1,6 @@
 import numpy as np
 
-from erosion_sim.hydrology import drainage_area, pits
+from erosion_sim.data.hydrology import drainage_area, pits
 
 
 def test_plane_drains_straight_downhill():
