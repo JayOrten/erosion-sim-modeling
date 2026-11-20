@@ -11,6 +11,8 @@ computed on its own, and overlapping regions agree.
   domain warp.
 - ``fbm``: Perlin fBm (fractal Brownian motion), the original starting terrain. The same as
   ``fractal_noise`` with its defaults.
+- ``ErodibilityMap``: a factor on the erodibility ``K`` per cell (uniform, patches, or bands), also a
+  function of world coordinates, so the world can compute it anywhere.
 
 FastNoiseLite computes in 32-bit floats. Coordinates up to about 10^5 cells give smooth noise; at
 10^6 it starts to wobble, and at 10^7 it breaks into steps.
@@ -138,3 +140,81 @@ class Terrain:
 
 # Terrain's fields, in order. Datasets store one array per field.
 TERRAIN_FIELDS = tuple(f.name for f in fields(Terrain))
+
+
+# ---- Erodibility maps ----
+
+MAP_SHAPES = ("uniform", "patches", "bands")
+PATCH_OCTAVES = 3
+# Patches: the smooth step from hard to soft spans fBm values -PATCH_EDGE to PATCH_EDGE. The 3-octave
+# fBm has a standard deviation of about 0.2, so most cells end near 0 or 1.
+PATCH_EDGE = 0.04
+
+
+def smoothstep(x: np.ndarray, low: float, high: float) -> np.ndarray:
+    """0 below ``low``, 1 above ``high``, and the smooth cubic ``3t² - 2t³`` between."""
+    t = np.clip((x - low) / (high - low), 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+@dataclass(frozen=True)
+class ErodibilityMap:
+    """A factor on ``K`` per cell, ``contrast ** (s - 1/2)``, where ``s`` is 0 on the hardest rock and 1 on
+    the softest. The softest rock erodes ``contrast`` times faster than the hardest, and the geometric
+    mean is about 1, so ``K_ref`` stays the overall rate.
+
+    - ``uniform``: ``s`` = 1/2 everywhere; every factor is 1.
+    - ``patches``: Perlin fBm at ``period`` (3 octaves) through a smooth step, so most cells are near 0 or
+      1. Stands for intrusions and mixed rock.
+    - ``bands``: stripes ``band_width`` cells wide along ``band_angle`` degrees, alternating 0 and 1, with
+      a smooth transition about ``band_width / 8`` wide. Each stripe is bent sideways by up to about one
+      ``band_width`` by Perlin noise at ``bend_period`` (the terrain's period). Stands for tilted layers.
+
+    ``seed`` seeds the noise. Like ``Terrain``, it exists at every cell.
+    """
+
+    shape: str = "uniform"
+    contrast: float = 1.0
+    period: float = 64.0
+    band_width: float = 32.0
+    band_angle: float = 0.0
+    bend_period: float = 32.0
+    seed: int = 0
+
+    def __post_init__(self):
+        if self.shape not in MAP_SHAPES:
+            raise ValueError(f"shape must be one of {MAP_SHAPES}, got {self.shape!r}")
+        if self.contrast < 1:
+            raise ValueError("contrast is the softest rate over the hardest, at least 1")
+
+    def softness(self, y0: float, x0: float, h: int, w: int) -> np.ndarray:
+        """``s`` on cells ``y0 .. y0 + h - 1`` by ``x0 .. x0 + w - 1``: 0 hardest, 1 softest."""
+        if self.shape == "uniform":
+            return np.full((h, w), 0.5)
+        if self.shape == "patches":
+            n = fractal_noise((h, w), self.seed, self.period, PATCH_OCTAVES, origin=(y0, x0))
+            return smoothstep(n, -PATCH_EDGE, PATCH_EDGE)
+        y, x = np.meshgrid(y0 + np.arange(h), x0 + np.arange(w), indexing="ij")
+        angle = np.deg2rad(self.band_angle)
+        across = -x * np.sin(angle) + y * np.cos(angle)  # distance across the stripes
+        # One octave of Perlin noise is within about ±0.7; scaled so the bend reaches about one band width.
+        bend = fractal_noise((h, w), self.seed, self.bend_period, 1, origin=(y0, x0))
+        across = across + self.band_width * np.clip(bend / 0.7, -1, 1)
+        # sin(pi * across / band_width) changes sign every band width. Near a crossing it moves by
+        # pi / band_width per cell, so a step over ±pi/16 is about band_width / 8 cells wide.
+        return smoothstep(np.sin(np.pi * across / self.band_width), -np.pi / 16, np.pi / 16)
+
+    def factors(self, y0: float, x0: float, h: int, w: int) -> np.ndarray:
+        """The factor on ``K`` per cell, ``contrast ** (s - 1/2)``."""
+        return self.contrast ** (self.softness(y0, x0, h, w) - 0.5)
+
+
+# ErodibilityMap's fields, and the run-table columns that hold them.
+MAP_COLUMNS = {"shape": "map_shape", "contrast": "map_contrast", "period": "map_period", "band_width": "band_width",
+               "band_angle": "band_angle", "bend_period": "period", "seed": "map_seed"}
+
+
+def map_from_columns(row: dict) -> ErodibilityMap:
+    """The ``ErodibilityMap`` of one run, from its run-table row (a dict of scalars)."""
+    return ErodibilityMap(**{field: np.asarray(row[column]).item() for field, column in MAP_COLUMNS.items()})
+

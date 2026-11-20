@@ -14,7 +14,7 @@ The noise never depends on the elapsed time ``dT``, so every ``dT`` starts from 
 
 import numpy as np
 
-from ..diffusion import noise_seed
+from ..seeding import noise_seed
 
 TILE = 64
 

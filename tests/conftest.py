@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import torch
 
-from erosion_sim.data import Split
-from erosion_sim.normalization import Scaling
+from erosion_sim.data.normalization import Scaling
+from erosion_sim.data.splits import Split
 
 # The test models are tiny. Many CPU threads only contend with each other (and with anything else running),
 # which made the suite over 20 times slower.
@@ -25,8 +25,8 @@ def write_fake_dataset(path, seed=0):
     snapshots[:, :, 0, :] = snapshots[:, :1, 0, :]  # fixed edges, as in the simulator
     np.save(path / "snapshots.npy", snapshots)
     np.savez(
-        path / "params.npz",
-        times=np.arange(SNAPS) * 1000.0,
+        path / "runs.npz",
+        index=np.arange(RUNS),
         K=K_ref * 1.2, K_ref=K_ref, D=K_ref * np.array([0.5, 1, 2, 3]), m=np.array([0.3, 0.4, 0.5, 0.6]),
         U=np.array([0.0, 0.0, 1e-5, 2e-5]),
         # Terrain fields, as datagen stores them. The fake snapshots do not follow them.
@@ -34,7 +34,7 @@ def write_fake_dataset(path, seed=0):
         lacunarity=np.full(RUNS, 2.0), height=np.full(RUNS, 64.0), noise=np.full(RUNS, "perlin"),
         fractal=np.full(RUNS, "fbm"), warp=np.zeros(RUNS),
     )
-    (path / "meta.json").write_text(json.dumps({"config": {}, "split": path.name}))
+    (path / "meta.json").write_text(json.dumps({"config": {}, "split": path.name, "times": (np.arange(SNAPS) * 1000.0).tolist()}))
     return path
 
 
@@ -45,7 +45,7 @@ def dataset(tmp_path):
 
 @pytest.fixture
 def scaling(dataset):
-    return Scaling.fit(dataset.snapshots, dataset.params, np.arange(len(dataset)), dataset.times)
+    return Scaling.fit(dataset.snapshots, dataset.columns, np.arange(len(dataset)), dataset.times)
 
 
 @pytest.fixture
@@ -53,3 +53,15 @@ def data_root(tmp_path):
     write_fake_dataset(tmp_path / "data" / "train", seed=0)
     write_fake_dataset(tmp_path / "data" / "val", seed=1)
     return tmp_path / "data"
+
+
+@pytest.fixture(scope="session")
+def dla_root(tmp_path_factory):
+    """The dla_smoke dataset, every split, generated once per test session."""
+    from erosion_sim.dla.config import PROFILES
+    from erosion_sim.dla.data import make_split
+
+    root = tmp_path_factory.mktemp("dla")
+    for split in ("train", "val", "test"):
+        make_split(PROFILES["dla_smoke"], split, root / split)
+    return root

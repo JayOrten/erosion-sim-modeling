@@ -15,32 +15,35 @@ uv sync
 
 ## Use
 
-```python
-from erosion_datagen.config import PROFILES
-from erosion_datagen.simulate import make_dataset
-
-for split in ["train", "val", "test"]:
-    make_dataset(PROFILES["world"], split, progress_every=500)
+```sh
+uv run erosion-datagen list                      # every group: grid, runs per split, snapshots, disk
+uv run erosion-datagen generate main_256         # every split of a group; resumes, skips finished splits
+uv run erosion-datagen chunked main_512 test --chunk 256   # the runs again as closed chunks (C8)
 ```
 
-Profiles are in `src/erosion_datagen/config.py`. `world` is the dataset for the infinite world
-(`../docs/plans/infinite-plan.md`): the period is fixed at 32 cells.
+On the cluster, `sbatch slurm/datagen.sbatch <group> [split ...]` from the repo root runs `generate` on
+one CPU node, with a process per core.
 
-Each run's starting terrain is an `erosion_terrain.Terrain` (in `../terrain/`, shared with the main
-package), drawn per run from the profile's ranges. Datasets made before the terrain fields were stored
-under `Terrain`'s names (with `terrain_seed`, and noise types as indices) do not open with `Split`;
-regenerate them.
+Groups are in `src/erosion_datagen/config.py` (``GROUPS``), following the experiments plan's "Erosion
+data" section: `main_256` to `main_2048` (one per scale band), `ood_*`, `long_*`, and two `smoke` groups.
+Every column of a run is drawn independently from the run's own random stream, seeded by SHA-256 of
+(dataset, group, split, index), so a run does not change if its split grows. `real_dem` groups are
+deferred (they need elevation tiles downloaded first).
 
-Output goes to `../artifacts/data/<profile>/<split>/`: `snapshots.npy` (float32, shape
-`(runs, snapshots, rows, cols)`), `params.npz`, and `meta.json`. `params.npz` holds one array per run
-for each erosion parameter (`K`, `K_ref`, `D`, `m`, `U`) and each field of `erosion_terrain.Terrain`,
-plus the snapshot `times`. The main project opens a split with `erosion_sim.data.Split`.
+Each run's starting terrain is an `erosion_terrain.Terrain` and its erodibility map an
+`erosion_terrain.ErodibilityMap` (in `../terrain/`, shared with the main package), so the world can
+compute both anywhere. The simulator uses `K × map` per cell.
 
-`src/erosion_datagen/timing.py` times the simulator. The main package runs it as a separate process
-to compare the simulator's speed with the models'.
+Output goes to `../artifacts/data/<dataset>/<group>/<split>/`, or under `$EROSION_ARTIFACTS/data/` if
+set: `snapshots.npy` (float32, `(runs, snapshots, rows, cols)`), `runs.npz`, and `meta.json`.
+`runs.npz` is the run table, one array per column: `group`, `split`, `index`, `run_seed`, every field of
+`Terrain` (`seed` is the noise seed), `K_ref`, `K`, `D`, `m`, `U` (always 0), `ood_param`, and the map
+columns. `meta.json` holds the group settings and the snapshot `times`, and is written last. The main
+project opens a split with `erosion_sim.data.splits.Split.open("erosion_master/main_256", "train")`.
 
-`../notebooks/datagen/demo.ipynb` walks through one run and a small dataset. The notebooks in
-`../notebooks/datagen/` use `.venv` in this folder as their kernel.
+`measure.py` has the measurements behind the group settings (feature size, edge reach, speed;
+`../docs/notes/datagen-measurements.md`). `timing.py` times the simulator; the main package runs it as a
+separate process to compare the simulator's speed with the models'. `render.py` makes 3D renders.
 
 ## Tests
 

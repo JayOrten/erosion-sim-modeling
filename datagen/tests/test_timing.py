@@ -3,7 +3,6 @@ import subprocess
 import sys
 
 import numpy as np
-
 from erosion_datagen.timing import time_simulator
 from erosion_terrain import fbm
 
