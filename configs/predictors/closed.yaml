@@ -1,0 +1,5 @@
+# The base cascade's levels trained on whole closed runs.
+kind: cascade
+levels: [coarse_closed, fine_closed]
+steps: 32
+splits: [5.0]

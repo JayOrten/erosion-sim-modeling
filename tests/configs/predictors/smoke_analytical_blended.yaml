@@ -1,0 +1,4 @@
+# Smoke: the analytical solution on 16² chunks, blended.
+kind: baseline
+method: analytical_blended
+chunk: 16

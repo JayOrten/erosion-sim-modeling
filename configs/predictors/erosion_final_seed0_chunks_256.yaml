@@ -1,0 +1,6 @@
+# The final single-window model on closed 256² chunks, stitched, at 32 sampler steps.
+kind: baseline
+method: model_chunks
+model: erosion_final_seed0
+chunk: 256
+steps: 32

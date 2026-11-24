@@ -3,6 +3,7 @@
 from dataclasses import replace
 
 import torch
+from conftest import CONFIGS
 
 from erosion_sim.config import model_config
 from erosion_sim.data.normalization import ChangeScaling, ParameterScaling, Scaling
@@ -13,7 +14,7 @@ SCALING = Scaling(ParameterScaling(low=(0.0,) * 4, high=(1.0,) * 4), ChangeScali
 
 def level(cell: int, window: int, context_cell: int | None = None, objective: str = "edm", seed: int = 0, **changes):
     """``(model, scaling, config)`` of an untrained level, as ``load_checkpoint`` gives them."""
-    cfg = replace(replace(model_config("smoke"), objective=objective), fixed_edges=False, cell=cell, window=window,
+    cfg = replace(replace(model_config("smoke", CONFIGS), objective=objective), fixed_edges=False, cell=cell, window=window,
                   context_cell=context_cell, **changes)
     torch.manual_seed(seed)
     model = build_model(cfg).eval()

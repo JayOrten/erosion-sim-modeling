@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -12,6 +13,9 @@ from erosion_sim.data.splits import Split
 torch.set_num_threads(1)
 
 RUNS, SNAPS, SIZE = 4, 6, 16
+SMOKE = "erosion_smoke/smoke"  # the smoke models' dataset
+# The tests' own configs (smoke models, datasets, evaluations, predictors), laid out like the repo's configs/.
+CONFIGS = Path(__file__).parent / "configs"
 
 
 def write_fake_dataset(path, seed=0):
@@ -50,18 +54,19 @@ def scaling(dataset):
 
 @pytest.fixture
 def data_root(tmp_path):
-    write_fake_dataset(tmp_path / "data" / "train", seed=0)
-    write_fake_dataset(tmp_path / "data" / "val", seed=1)
+    """A data folder holding a fake erosion_smoke/smoke dataset (the smoke model's) with train and val."""
+    write_fake_dataset(tmp_path / "data" / SMOKE / "train", seed=0)
+    write_fake_dataset(tmp_path / "data" / SMOKE / "val", seed=1)
     return tmp_path / "data"
 
 
 @pytest.fixture(scope="session")
 def dla_root(tmp_path_factory):
-    """The dla_smoke dataset, every split, generated once per test session."""
-    from erosion_sim.dla.config import PROFILES
+    """A data folder holding the dla_smoke dataset, every split, generated once per test session."""
+    from erosion_sim.dla.config import data_config
     from erosion_sim.dla.data import make_split
 
     root = tmp_path_factory.mktemp("dla")
     for split in ("train", "val", "test"):
-        make_split(PROFILES["dla_smoke"], split, root / split)
+        make_split(data_config("dla_smoke", CONFIGS), split, root / "dla_smoke" / split, processes=1)
     return root

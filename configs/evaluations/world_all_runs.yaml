@@ -1,0 +1,18 @@
+# World, on every 512² test run.
+suite: world
+data_profile: erosion_master/main_512
+split: test
+data: {}
+runs: null
+ends_yr: [25000.0, 50000.0]
+margin: 32
+steps: 32
+level_pairs_per_run: 4
+chunk: 256
+chunk_edge: 16
+seams: true
+seam_windows: 4
+batch_size: 16
+examples: 2
+seed: 0
+bf16: true

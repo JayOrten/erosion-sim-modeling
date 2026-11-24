@@ -1,4 +1,0 @@
-# The base world with one blend phase split at 2.
-levels: [coarse, fine]
-steps: 32
-splits: [2.0]

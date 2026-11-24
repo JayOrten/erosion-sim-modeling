@@ -1,0 +1,4 @@
+# Smoke: the analytical solution on closed 16² chunks.
+kind: baseline
+method: analytical_chunks
+chunk: 16

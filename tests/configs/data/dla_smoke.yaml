@@ -1,0 +1,12 @@
+# Seconds on CPU, for tests.
+generator: dla
+size: 48
+particles: 60
+train_runs: 8
+val_runs: 4
+p_range: [0.05, 1.0]
+test_p: [0.1, 1.0]
+test_runs_per_p: 3
+start_p: [0.1, 1.0]
+start_particles: 20
+runs_per_start: 2

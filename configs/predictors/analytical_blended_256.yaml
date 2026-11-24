@@ -1,0 +1,4 @@
+# The analytical solution on 256² chunks at half-chunk stride, blended with tents.
+kind: baseline
+method: analytical_blended
+chunk: 256

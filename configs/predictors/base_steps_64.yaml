@@ -1,0 +1,5 @@
+# The base cascade at 64 sampler steps.
+kind: cascade
+levels: [coarse, fine]
+steps: 64
+splits: [5.0]

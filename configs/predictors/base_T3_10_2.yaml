@@ -1,0 +1,5 @@
+# The base cascade with two blend phases split at 10 and 2.
+kind: cascade
+levels: [coarse, fine]
+steps: 32
+splits: [10.0, 2.0]

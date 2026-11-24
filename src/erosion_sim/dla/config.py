@@ -1,6 +1,13 @@
-"""DLA dataset profiles: grid, particle count, and the runs in each split (docs/plans/experiments-plan.md)."""
+"""DLA datasets: one file per dataset in ``configs/data/<name>.yaml`` with ``generator: dla``: grid,
+particle count, and the runs in each split (docs/plans/experiments-plan.md)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from pathlib import Path
+
+import yaml
+
+from ..config import check_fields, from_json_value
+from ..paths import CONFIGS_DIR
 
 
 @dataclass(frozen=True)
@@ -26,7 +33,6 @@ class DataConfig:
     start_p: tuple[float, ...] = (0.1,) * 10 + (1.0,) * 10  # one entry per shared start
     start_particles: int = 200
     runs_per_start: int = 50
-    processes: int | None = None  # None uses every core the process may use
 
     def runs(self, split: str) -> int:
         if split == "test":
@@ -36,20 +42,16 @@ class DataConfig:
 
 SPLITS = ("train", "val", "test")
 
-PROFILES = {
-    # Seconds on CPU, for tests.
-    "dla_smoke": DataConfig(
-        profile="dla_smoke",
-        size=48,
-        particles=60,
-        train_runs=8,
-        val_runs=4,
-        test_p=(0.1, 1.0),
-        test_runs_per_p=3,
-        start_p=(0.1, 1.0),
-        start_particles=20,
-        runs_per_start=2,
-        processes=1,
-    ),
-    "dla_master": DataConfig(profile="dla_master"),
-}
+
+
+def data_config(name: str, root: Path | None = None) -> DataConfig:
+    """The DLA dataset in ``configs/data/<name>.yaml`` (``root`` replaces ``configs/``). The file has
+    ``generator: dla`` and every field but ``profile``, which is the file name."""
+    path = (Path(root) if root is not None else CONFIGS_DIR) / "data" / f"{name}.yaml"
+    if not path.exists():
+        raise KeyError(f"no dataset {name!r}: {path} does not exist")
+    values = yaml.safe_load(path.read_text()) or {}
+    if values.pop("generator", None) != "dla":
+        raise ValueError(f"{path}: not a DLA dataset (generator must be dla)")
+    check_fields(path, values, {f.name for f in fields(DataConfig)} - {"profile"})
+    return DataConfig(profile=name, **{k: from_json_value(v) for k, v in values.items()})

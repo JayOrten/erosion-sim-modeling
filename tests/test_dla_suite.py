@@ -4,10 +4,11 @@ import matplotlib
 import matplotlib.pyplot
 import numpy as np
 import pytest
+from conftest import CONFIGS
 
 from erosion_sim.config import model_config
 from erosion_sim.dla import metrics, plots
-from erosion_sim.dla.config import PROFILES as DATA_PROFILES
+from erosion_sim.dla.config import data_config
 from erosion_sim.dla.data import DLASplit
 from erosion_sim.dla.simulate import occupancy, run_seed, simulate
 from erosion_sim.dla.suite import Settings, conditions, evaluate_dla
@@ -15,7 +16,7 @@ from erosion_sim.evaluation.results import read_results, write_results
 from erosion_sim.training.train import train
 
 matplotlib.use("Agg")
-DATA = DATA_PROFILES["dla_smoke"]
+DATA = data_config("dla_smoke", CONFIGS)
 
 
 def _cross(size: int = 9) -> np.ndarray:
@@ -58,7 +59,7 @@ def test_wasserstein():
 
 
 def test_conditions_cover_the_test_split(dla_root):
-    test = DLASplit(dla_root / "test")
+    test = DLASplit(dla_root / "dla_smoke" / "test")
     conds = conditions(test)
     assert [c.name for c in conds] == ["p=0.1", "p=1", "start=0", "start=1"]
     assert sum(len(c.runs) for c in conds) == len(test)
@@ -75,7 +76,7 @@ def test_results_round_trip(tmp_path):
 def test_suite_writes_a_readable_results_folder(dla_root, tmp_path, objective):
     from dataclasses import replace
 
-    cfg = replace(model_config("smoke_dla"), objective=objective)
+    cfg = replace(model_config("smoke_dla", CONFIGS), objective=objective)
     model = train(cfg, data_root=dla_root, out=tmp_path / "model")["folder"]
     out = evaluate_dla({"base": model}, tmp_path / "results", data_root=dla_root,
                        settings=Settings(steps=2, batch_size=4), device="cpu")
@@ -102,15 +103,15 @@ def test_step_sweep_scores_each_model_at_each_step_count(dla_root, tmp_path):
 
     folders = {}
     for objective in ("edm", "flow_matching"):
-        cfg = replace(model_config("smoke_dla"), objective=objective)
+        cfg = replace(model_config("smoke_dla", CONFIGS), objective=objective)
         folders[objective] = train(cfg, data_root=dla_root, out=tmp_path / objective)["folder"]
     out = evaluate_dla(folders, tmp_path / "results", data_root=dla_root,
-                       settings=Settings(step_sweep=(1, 3), batch_size=4, only="p="), device="cpu")
+                       settings=Settings(step_sweep=(1, 3), batch_size=4), device="cpu")
     results = read_results(out)
     entries = results.manifest["entries"]
     assert list(entries) == ["edm@1", "edm@3", "flow_matching@1", "flow_matching@3"]
     assert [e["network_calls"] for e in entries.values()] == [1, 5, 1, 3]
-    assert results.manifest["conditions"] == ["p=0.1", "p=1"]
+    assert results.manifest["conditions"] == ["p=0.1", "p=1", "start=0", "start=1"]
     assert plots.models(results) == list(entries)
     plots.plot_steps(results, show=False)
     plots.table(results)

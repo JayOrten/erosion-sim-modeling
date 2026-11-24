@@ -1,0 +1,5 @@
+# A smoke cascade.
+kind: cascade
+levels: [smoke_coarse, smoke_fine]
+steps: 32
+splits: [5.0]

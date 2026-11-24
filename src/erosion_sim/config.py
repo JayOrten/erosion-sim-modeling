@@ -1,14 +1,12 @@
 """Training settings: one frozen ``Config`` per model, read from ``configs/models/<name>.yaml``.
 
 A model file lists every field below except ``name``, which is the file name: each file is the complete
-record of its model, and does not depend on the defaults here. The defaults fill fields missing from
-``config.json`` files saved before a field was added.
+record of its model, and does not depend on the defaults here.
 A trained model's folder holds its full config as ``config.json`` (``config_to_json``), so the settings it
 was trained with can always be read back (``config_from_json``).
 """
 
-import json
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 import yaml
@@ -38,14 +36,12 @@ class Config:
     # (residual.py, experiment B8). `teacher`: the EDM model a consistency student is distilled from.
     residual_of: str | None = None
     teacher: str | None = None
-    # Which runs to use, as (column, condition) pairs; see table.select. Applied to train and val. Empty
-    # uses every run. Example: (("fractal", "fbm"), ("index", (0, 2667))).
-    data: tuple[tuple[str, object], ...] = ()
+    # Which runs to use: column -> condition; see table.select. Applied to train and val. Empty uses every
+    # run. Example: {"fractal": "fbm", "index": {"range": [0, 2667]}}.
+    data: dict = field(default_factory=dict)
     # Train on only the first `max_runs` of the selected runs, in table order (nested subsets, experiment
     # B4). Validation keeps every selected run.
     max_runs: int | None = None
-    # Elapsed times to train on, in snapshot steps (1 = one snapshot apart). None uses all.
-    lags: tuple[int, ...] | None = None
     # Edge cells change by zero, as in the simulator. False for world levels, whose window edges are not
     # boundaries, and for DLA.
     fixed_edges: bool = True
@@ -67,9 +63,8 @@ class Config:
     # exponent (experiment B7; 0 is the plain loss).
     inputs: tuple[str, ...] = ()
     drainage_weight: float = 0.0
-    # DLA: range of the start step t, both ends included. None uses 1 to 90% of the particle count.
+    # DLA only: the range of the start step t, both ends included (dla.data.DLAPairs). None for erosion.
     t_range: tuple[int, int] | None = None
-    max_train_samples: int | None = None  # train on only this many fixed pairs (for the overfit test)
     # Model. Each backbone reads only its own settings: U-Net (model.py), DiT (dit.py), FNO (fno.py).
     channels: tuple[int, ...] = (32, 64, 128, 256)
     blocks: int = 1
@@ -90,7 +85,6 @@ class Config:
     lr: float = 3e-4
     weight_decay: float = 1e-4
     steps: int = 20_000
-    epochs: float | None = None  # if set, replaces steps: this many passes over the training pairs
     warmup_steps: int = 500
     # Exponential moving average of the weights, used for validation and saved as the model. Each step
     # moves the average 1 - ema_decay of the way to the training weights, so it covers about
@@ -113,6 +107,8 @@ class Config:
                 raise ValueError(f"{name} must be one of {allowed}, got {getattr(self, name)!r}")
         if self.task == "dla" and self.fixed_edges:
             raise ValueError("DLA models have no fixed edges")
+        if (self.task == "dla") != (self.t_range is not None):
+            raise ValueError("t_range is set for DLA models, and only for them")
         if self.window is not None and self.fixed_edges:
             raise ValueError("window items are crops whose edges are not boundaries: set fixed_edges=False")
         if self.objective not in OBJECTIVES:
@@ -147,6 +143,19 @@ def check_fields(path: Path, values: dict, required: set[str]) -> None:
                               f"unknown fields {', '.join(unknown)}" if unknown else "") if text))
 
 
+def data_names(root: Path | None = None) -> list[str]:
+    """Every dataset defined in ``configs/data/``, by path without ``.yaml``: ``dla_master``,
+    ``erosion_master/main_256``. The same path under ``artifacts/data/`` holds its splits."""
+    folder = (Path(root) if root is not None else CONFIGS_DIR) / "data"
+    return sorted(str(p.relative_to(folder).with_suffix("")) for p in folder.rglob("*.yaml"))
+
+
+def check_data_profile(name: str, root: Path | None = None) -> None:
+    """Raise ``KeyError`` unless ``name`` is a dataset in ``configs/data/``."""
+    if name not in data_names(root):
+        raise KeyError(f"no dataset {name!r} in configs/data/; datasets: {', '.join(data_names(root))}")
+
+
 def config_names(kind: str, root: Path | None = None) -> list[str]:
     """Every name defined in ``configs/<kind>/`` (``models``, ``evaluations``, or ``worlds``). ``root``
     replaces ``configs/``."""
@@ -169,39 +178,31 @@ NOT_TRAINING = frozenset({"name", "num_workers", "log_every", "compile", "patien
 
 
 def to_json_value(value):
-    if isinstance(value, (set, frozenset)):  # tagged, so a set never reads back as a range tuple
-        return {"one_of": sorted((to_json_value(v) for v in value), key=lambda v: json.dumps(v, sort_keys=True))}
+    """Tuples become lists, at any depth."""
     if isinstance(value, (tuple, list)):
         return [to_json_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: to_json_value(v) for k, v in value.items()}
     return value
 
 
 def from_json_value(value):
-    if isinstance(value, dict) and set(value) == {"one_of"}:
-        return frozenset(from_json_value(v) for v in value["one_of"])
+    """Lists become tuples, at any depth, as the dataclasses use them."""
     if isinstance(value, list):
         return tuple(from_json_value(v) for v in value)
+    if isinstance(value, dict):
+        return {k: from_json_value(v) for k, v in value.items()}
     return value
 
 
 def config_to_json(cfg: Config) -> dict:
-    """``cfg`` as plain JSON values. Tuples become lists; sets become ``{"one_of": [...]}``."""
+    """``cfg`` as plain JSON values."""
     return {k: to_json_value(v) for k, v in asdict(cfg).items()}
 
 
-def config_from_dict(values: dict) -> Config:
-    """A ``Config`` from saved fields, as in a checkpoint. Fields missing from ``values`` (added since it was
-    saved) take their defaults; fields no longer in ``Config`` are dropped. Configs saved before models
-    had names have ``profile`` instead of ``name``."""
-    known = {f.name for f in fields(Config)}
-    if "name" not in values and "profile" in values:
-        values = {**values, "name": values["profile"]}
-    return Config(**{k: v for k, v in values.items() if k in known})
-
-
 def config_from_json(values: dict) -> Config:
-    """The inverse of ``config_to_json``, with ``config_from_dict``'s handling of added and removed fields."""
-    return config_from_dict({k: from_json_value(v) for k, v in values.items()})
+    """The inverse of ``config_to_json``."""
+    return Config(**{k: from_json_value(v) for k, v in values.items()})
 
 
 def training_differences(stored: Config, requested: Config) -> list[str]:

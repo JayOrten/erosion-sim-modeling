@@ -1,13 +1,14 @@
-"""The erosion evaluation suite (track B): every terrain metric for some single-window models on test runs,
-written as a results folder (``evaluation/results.py``).
+"""The erosion evaluation suite (track B): every terrain metric for single-window models and baselines on
+test runs, written as a results folder (``evaluation/results.py``).
 
-Pairs. Every model is scored on the same (run, start, end) pairs of the test runs: ``pairs_per_run``
+Pairs. Everything is scored on the same (run, start, end) pairs of the test runs: ``pairs_per_run``
 random pairs per run (fixed by ``seed``), or with ``ends_yr``, the pairs from the start terrain to each of
 those elapsed times. Whole runs, every cell scored.
 
 Entries. Each scored method is an entry:
 
-- ``no change`` (the start terrain) and, with ``baselines``, ``analytical`` (``baselines.py``).
+- each baseline (``baselines``: name -> a baseline predictor file's contents), by its name. Methods:
+  ``no_change`` (the start terrain) and ``analytical`` (``baselines.py``).
 - each model, at ``steps`` sampler steps, or at each of ``step_sweep`` as ``<label>@<steps>``. A generative
   model draws ``samples`` samples per pair; sample 0 is scored, and the per-cell spread across samples
   is compared with the error.
@@ -27,7 +28,7 @@ Results layout:
 """
 
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -54,14 +55,13 @@ BREAKDOWNS = (*CATEGORICAL, *CONTINUOUS, "dT")
 class Settings:
     data_profile: str | None = None  # test dataset; None uses the first model's training dataset
     split: str = "test"
-    data: tuple[tuple[str, object], ...] = ()  # filters on the test runs (table.select)
+    data: dict = field(default_factory=dict)  # filters on the test runs (table.select)
     runs: int | None = None  # use at most this many runs, the first in table order
     pairs_per_run: int = 4
     ends_yr: tuple[float, ...] | None = None  # pairs from the start to each of these times, instead of random
     samples: int = 2  # samples per pair for generative models (spread needs 2 or more)
     steps: int = DEFAULT_STEPS
     step_sweep: tuple[int, ...] | None = None
-    baselines: tuple[str, ...] = ("analytical",)
     fill_pits: bool = False
     chains: tuple[tuple[int, float], ...] = ()  # (calls, years per call)
     batch_size: int = 32
@@ -147,16 +147,29 @@ def _predict(model, dataset: ErosionPairs, pairs: np.ndarray, settings: Settings
     return out
 
 
+BASELINES = ("no_change", "analytical")
+
+
 def evaluate_erosion(models: dict[str, Path], out: Path, settings: Settings = Settings(), data_root: Path | None = None,
-                     device: str | None = None, record: dict | None = None) -> Path:
-    """Score each model (name -> model folder) on the test pairs and write the results to ``out``."""
+                     device: str | None = None, record: dict | None = None,
+                     baselines: dict[str, dict] | None = None) -> Path:
+    """Score each model (name -> model folder) and each baseline (name -> {"method": ...}) on the test pairs
+    and write the results to ``out``."""
+    baselines = baselines or {}
+    for name, spec in baselines.items():
+        if spec["method"] not in BASELINES:
+            raise ValueError(f"{name}: the erosion suite has no {spec['method']} baseline; it has {BASELINES}")
     loaded = {label: load_checkpoint(folder, device=device) for label, folder in models.items()}
     for label, (_, _, cfg, _) in loaded.items():
         if cfg.task != "erosion" or cfg.window is not None or cfg.cell != 1:
             raise ValueError(f"{label} is not a whole-run erosion model; the world suite scores world levels")
+    if not (loaded or baselines):
+        raise ValueError("nothing to score: no models and no baselines")
+    if not (settings.data_profile or loaded):
+        raise ValueError("settings.data_profile is needed when only baselines are scored")
     profile = settings.data_profile or next(iter(loaded.values()))[2].data_profile
     test = Split.open(profile, settings.split, data_root)
-    runs = test.select(**dict(settings.data))[: settings.runs]
+    runs = test.select(**settings.data)[: settings.runs]
     pairs = choose_pairs(test, runs, settings)
     if not len(pairs):
         raise ValueError("no test pairs: check the filters and ends_yr")
@@ -166,16 +179,19 @@ def evaluate_erosion(models: dict[str, Path], out: Path, settings: Settings = Se
     dT = test.times[end] - test.times[start]
     truths = [metrics.Truth(a, b, test.columns["m"][r]) for a, b, r in zip(z_a, z_b, run)]
 
-    heights: dict[str, np.ndarray] = {"no change": z_a}
+    heights: dict[str, np.ndarray] = {}
     rows_of: dict[str, np.ndarray] = {}  # entries scored on a subset of pairs (chains)
-    entries: dict[str, dict] = {"no change": {"kind": "baseline"}}
+    entries: dict[str, dict] = {}
     spreads, seconds = {}, {}
-    if "analytical" in settings.baselines:
-        heights["analytical"] = np.stack([
-            analytical_stream_power(z_a[i], test.columns["K"][r], test.columns["m"][r], dT[i],
-                                    test.erodibility_map(r).factors(0, 0, *z_a.shape[-2:]))
-            for i, r in enumerate(run)])
-        entries["analytical"] = {"kind": "baseline"}
+    for name, spec in baselines.items():
+        if spec["method"] == "no_change":
+            heights[name] = z_a
+        else:
+            heights[name] = np.stack([
+                analytical_stream_power(z_a[i], test.columns["K"][r], test.columns["m"][r], dT[i],
+                                        test.erodibility_map(r).factors(0, 0, *z_a.shape[-2:]))
+                for i, r in enumerate(run)])
+        entries[name] = {"kind": "baseline", "method": spec["method"]}
 
     for label, (model, scaling, cfg, _) in loaded.items():
         dataset = ErosionPairs(test, scaling, inputs=cfg.inputs)

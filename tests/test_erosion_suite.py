@@ -4,6 +4,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from conftest import CONFIGS
 from erosion_terrain import Terrain
 
 from erosion_sim.config import model_config
@@ -91,10 +92,10 @@ def two_models(tmp_path_factory):
 
     root = tmp_path_factory.mktemp("erosion")
     for split, seed in (("train", 0), ("val", 1), ("test", 2)):
-        write_fake_dataset(root / "data" / split, seed=seed)
+        write_fake_dataset(root / "data" / "erosion_smoke" / "smoke" / split, seed=seed)
     folders = {}
     for objective in ("regression", "edm"):
-        cfg = replace(model_config("smoke"), objective=objective)
+        cfg = replace(model_config("smoke", CONFIGS), objective=objective)
         folders[objective] = train(cfg, data_root=root / "data", out=root / objective)["folder"]
     return root, folders
 
@@ -102,18 +103,20 @@ def two_models(tmp_path_factory):
 def test_suite_writes_every_metric_and_breakdown(two_models, tmp_path):
     root, folders = two_models
     settings = Settings(pairs_per_run=3, samples=2, steps=2, fill_pits=True, batch_size=4)
-    out = evaluate_erosion(folders, tmp_path / "r", settings, data_root=root / "data", device="cpu")
+    baselines = {"no_change": {"method": "no_change"}, "analytical": {"method": "analytical"}}
+    out = evaluate_erosion(folders, tmp_path / "r", settings, data_root=root / "data", device="cpu",
+                           baselines=baselines)
     results = read_results(out)
     names = list(results.manifest["entries"])
-    assert names == ["no change", "analytical", "regression", "regression + pit filling", "edm", "edm + pit filling"]
+    assert names == ["no_change", "analytical", "regression", "regression + pit filling", "edm", "edm + pit filling"]
     assert results.manifest["entries"]["edm"]["network_calls"] == 3
     rows = results.scalars["entries"]
-    assert rows["no change"]["skill"] == 0 and rows["regression"]["pairs"] == 12
+    assert rows["no_change"]["skill"] == 0 and rows["regression"]["pairs"] == 12
     assert "spread_correlation" in rows["edm"] and "spread_correlation" not in rows["regression"]
     assert rows["regression + pit filling"]["pits_per_km2"] == 0
     assert set(results.scalars["by"]) >= {"K_ref", "dT", "m"}
     for groups in results.scalars["by"].values():
-        assert sum(g["no change"]["pairs"] for g in groups.values()) == 12
+        assert sum(g["no_change"]["pairs"] for g in groups.values()) == 12
     assert results.arrays["regression/sq_error"].shape == (12,)
     assert results.examples["edm"].shape == (3, 16, 16)
     plots.table(results)
@@ -122,11 +125,19 @@ def test_suite_writes_every_metric_and_breakdown(two_models, tmp_path):
                    plots.plot_examples(results, show=False)):
         assert figure is not None
     plt.close("all")
+    # A baseline scored on its own gets the same values: it is scored on the same pairs.
+    settings = replace(settings, data_profile="erosion_smoke/smoke")
+    alone = read_results(evaluate_erosion({}, tmp_path / "a", settings, data_root=root / "data", device="cpu",
+                                          baselines={"analytical": baselines["analytical"]}))
+    np.testing.assert_array_equal(alone.arrays["analytical/sq_error"], results.arrays["analytical/sq_error"])
+    with pytest.raises(ValueError, match="no simulator_chunks baseline"):
+        evaluate_erosion({}, tmp_path / "b", settings, data_root=root / "data",
+                         baselines={"s": {"method": "simulator_chunks", "chunk": 8}})
 
 
 def test_suite_step_sweep_and_chains(two_models, tmp_path):
     root, folders = two_models
-    settings = Settings(ends_yr=(2000.0, 4000.0), samples=1, step_sweep=(1, 2), baselines=(), batch_size=4,
+    settings = Settings(ends_yr=(2000.0, 4000.0), samples=1, step_sweep=(1, 2), batch_size=4,
                         chains=((2, 1000.0), (2, 2000.0)))
     out = evaluate_erosion({"edm": folders["edm"]}, tmp_path / "r", settings, data_root=root / "data",
                            device="cpu")
@@ -142,7 +153,7 @@ def test_suite_step_sweep_and_chains(two_models, tmp_path):
 
 def test_suite_rejects_world_levels(two_models, tmp_path):
     root, folders = two_models
-    cfg = replace(model_config("smoke"), objective="edm", fixed_edges=False, window=8)
+    cfg = replace(model_config("smoke", CONFIGS), objective="edm", fixed_edges=False, window=8)
     level = train(cfg, data_root=root / "data", out=tmp_path / "level")["folder"]
     with pytest.raises(ValueError, match="world"):
         evaluate_erosion({"level": level}, tmp_path / "r", data_root=root / "data", device="cpu")

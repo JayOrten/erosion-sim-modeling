@@ -1,0 +1,4 @@
+# The analytical solution on closed 256² chunks, stitched.
+kind: baseline
+method: analytical_chunks
+chunk: 256

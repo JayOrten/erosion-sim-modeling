@@ -2,6 +2,7 @@ import math
 from dataclasses import replace
 
 import torch
+from conftest import CONFIGS
 
 from erosion_sim.objectives.edm import SIGMA_MAX, SIGMA_MIN, Denoiser, initial_noise
 
@@ -99,7 +100,7 @@ def test_smoke_diffusion_training(data_root, tmp_path):
     from erosion_sim.training.train import train
 
     out = tmp_path / "edm-smoke"
-    history = train(replace(model_config("smoke"), objective="edm"), data_root=data_root, show=False, out=out)
+    history = train(replace(model_config("smoke", CONFIGS), objective="edm"), data_root=data_root, show=False, out=out)
     assert len(history["val_loss"]) == 2
     assert all(math.isfinite(v) for v in history["train_loss"] + history["val_loss"])
 
@@ -113,7 +114,7 @@ def test_validation_noise_is_fixed(data_root, tmp_path):
     from erosion_sim.training.train import train
 
     # With a learning rate of zero the model never changes, so fixed noise gives identical losses.
-    history = train(replace(model_config("smoke"), objective="edm"), data_root=data_root, show=False, out=tmp_path / "d",
+    history = train(replace(model_config("smoke", CONFIGS), objective="edm"), data_root=data_root, show=False, out=tmp_path / "d",
                     lr=0.0, warmup_steps=0, steps=3, eval_every=1)
     assert history["val_loss"][0] == history["val_loss"][1] == history["val_loss"][2]
 

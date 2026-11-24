@@ -1,6 +1,6 @@
 """Infinite eroded terrain from a seed, with InfiniteDiffusion and a stack of levels (track C).
 
-See docs/plans/infinite-plan.md. Modules:
+See docs/plans/done/infinite-plan.md. Modules:
 
 - ``world``: ``World``, the entry point: ``World.load(seed, dT, folders).get(y0, x0, h, w)``.
 - ``level``: one level sampled in overlapping windows, and the context a level reads from its parent.

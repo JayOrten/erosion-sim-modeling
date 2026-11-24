@@ -1,4 +1,4 @@
-"""One level of the world, sampled in overlapping windows with InfiniteDiffusion (infinite-plan step 6).
+"""One level of the world, sampled in overlapping windows with InfiniteDiffusion (docs/plans/done/infinite-plan.md, step 6).
 
 A level covers the whole plane with windows of ``window`` × ``window`` cells at a stride of half a
 window. Each window is a sample from the level's model. The sampler's schedule is cut into phases

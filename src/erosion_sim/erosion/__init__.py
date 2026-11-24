@@ -3,6 +3,5 @@
 - ``metrics``: terrain metrics as plain functions, per pair, and their summaries.
 - ``suite``: the erosion evaluation suite (track B), written as a results folder.
 - ``plots``: tables and figures from an erosion results folder.
-- ``speed``: time models and the simulator.
 - ``baselines``: analytical stream power, and chunked and blended bounded methods.
 """

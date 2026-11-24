@@ -1,13 +1,19 @@
-"""Erosion dataset groups: grid, ranges, run counts, and how each run's settings are drawn.
+"""Erosion datasets: one file per group in the repo's ``configs/data/<dataset>/<group>.yaml``.
 
 A dataset (``erosion_master``) is one table of simulator runs, stored in blocks called groups
-(docs/plans/experiments-plan.md, "Erosion data"). A group is one set of generator settings. Each
-(group, split) is one folder, ``artifacts/data/<dataset>/<group>/<split>/``.
+(docs/plans/experiments-plan.md, "Erosion data"). A group is one set of generator settings. Its name is
+the file's path under ``configs/data/``, such as ``erosion_master/main_256``, and its data goes to the same
+path under ``artifacts/data/``, one folder per split.
+
+A group file has ``generator: erosion`` and every field of ``Group`` but ``name`` and ``dataset``, which
+come from the path.
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
+
+import yaml
 
 # Datasets go where the training code reads them: the "artifacts" path in the main repo's local.json if
 # it exists, else the repo's artifacts/ folder. Same rule as erosion_sim.paths, which this environment
@@ -16,14 +22,7 @@ _REPO_DIR = Path(__file__).resolve().parents[3]
 _LOCAL = _REPO_DIR / "local.json"
 ARTIFACTS_DIR = (Path(json.loads(_LOCAL.read_text())["artifacts"]).expanduser() if _LOCAL.exists()
                  else _REPO_DIR / "artifacts")
-
-ALL_NOISE = ("perlin", "opensimplex2", "value_cubic")
-ALL_FRACTAL = ("fbm", "ridged")
-# map_shape shares in the main groups: most runs vary only the noise.
-MAIN_MAPS = (("uniform", 2 / 3), ("patches", 1 / 6), ("bands", 1 / 6))
-UNIFORM_MAP = (("uniform", 1.0),)
-# Out-of-range draws for ood groups, chosen by index % 3. All above the training range.
-OOD_RANGES = (("K_ref", (5e-4, 1e-3)), ("D_over_K", (3.0, 6.0)), ("m", (0.6, 0.7)))
+DATA_CONFIGS = _REPO_DIR / "configs" / "data"
 
 
 @dataclass(frozen=True)
@@ -35,41 +34,47 @@ class Group:
     how many runs the split has.
     """
 
-    name: str
+    name: str  # "main_256"
+    dataset: str  # "erosion_master"
     size: int  # grid cells per side, at 1 m
     train_runs: int
     val_runs: int
     test_runs: int
-    steps: int = 500
-    snapshot_every: int = 25
-    dataset: str = "erosion_master"
-    dt: float = 100.0  # yr per step
-    cell_size: float = 1.0  # m
+    steps: int
+    snapshot_every: int
+    dt: float  # yr per step
+    cell_size: float  # m
     # Starting terrain (erosion_terrain.fractal_noise)
-    period: tuple[float, float] = (32.0, 64.0)  # cells, log-uniform
-    height: tuple[float, float] = (32.0, 128.0)  # m per unit of noise, log-uniform
-    octaves: tuple[int, int] = (4, 7)  # uniform integer
-    persistence: tuple[float, float] = (0.35, 0.65)  # uniform
-    lacunarity: tuple[float, float] = (1.8, 2.4)  # uniform
-    noise_types: tuple[str, ...] = ALL_NOISE  # uniform
-    fractal_types: tuple[str, ...] = ALL_FRACTAL  # uniform
-    warp_fraction: float = 0.5  # share of runs with domain warp
-    warp: tuple[float, float] = (0.1, 0.5)  # uniform, when on
+    period: tuple[float, float]  # cells, log-uniform
+    height: tuple[float, float]  # m per unit of noise, log-uniform
+    octaves: tuple[int, int]  # uniform integer
+    persistence: tuple[float, float]  # uniform
+    lacunarity: tuple[float, float]  # uniform
+    noise_types: tuple[str, ...]  # uniform
+    fractal_types: tuple[str, ...]  # uniform
+    warp_fraction: float  # share of runs with domain warp
+    warp: tuple[float, float]  # uniform, when on
     # Erosion. K is drawn as K_ref, the erodibility at m = m_ref. The simulator uses
     # K = K_ref * A_ref ** (m_ref - m), so a channel draining A_ref m^2 cuts at the same rate for any m,
     # and m changes channel shape rather than overall rate. D is drawn as a ratio to K_ref.
-    K_ref: tuple[float, float] = (1e-4, 5e-4)  # log-uniform
-    D_over_K: tuple[float, float] = (0.3, 3.0)  # log-uniform
-    m: tuple[float, float] = (0.3, 0.6)  # uniform
-    m_ref: float = 0.4
-    A_ref: float = 30.0  # m^2; see notebooks/datagen/parameter-ranges.ipynb
+    K_ref: tuple[float, float]  # log-uniform
+    D_over_K: tuple[float, float]  # log-uniform
+    m: tuple[float, float]  # uniform
+    m_ref: float
+    A_ref: float  # m^2; see notebooks/datagen/parameter-ranges.ipynb
     # Erodibility map (erosion_terrain.ErodibilityMap)
-    maps: tuple[tuple[str, float], ...] = MAIN_MAPS  # (shape, share)
-    map_contrast: tuple[float, float] = (1.0, 10.0)  # log-uniform; 1 for uniform maps
-    map_period: tuple[float, float] = (32.0, 128.0)  # cells, log-uniform, patches only
-    band_width: tuple[float, float] = (8.0, 64.0)  # cells, log-uniform, bands only
-    ood: bool = False  # one erosion parameter out of range per run (OOD_RANGES)
-    processes: int | None = None  # None uses every core
+    maps: tuple[tuple[str, float], ...]  # (shape, share)
+    map_contrast: tuple[float, float]  # log-uniform; 1 for uniform maps
+    map_period: tuple[float, float]  # cells, log-uniform, patches only
+    band_width: tuple[float, float]  # cells, log-uniform, bands only
+    # Out-of-range draws: run i replaces parameter ood_ranges[i % len][0]'s range with ood_ranges[i % len][1]
+    # (parameters K_ref, D_over_K, m). Empty: every run in range.
+    ood_ranges: tuple[tuple[str, tuple[float, float]], ...]
+
+    @property
+    def profile(self) -> str:
+        """``<dataset>/<name>``: the file under ``configs/data/`` and the folder under ``artifacts/data/``."""
+        return f"{self.dataset}/{self.name}"
 
     def runs(self, split: str) -> int:
         return {"train": self.train_runs, "val": self.val_runs, "test": self.test_runs}[split]
@@ -83,38 +88,30 @@ class Group:
         return self.steps // self.snapshot_every + 1
 
 
-def _scaled(low_high: tuple[float, float], k: float) -> tuple[float, float]:
-    return (low_high[0] * k, low_high[1] * k)
+def _tuples(value):
+    return tuple(_tuples(v) for v in value) if isinstance(value, list) else value
 
 
-def _main(name: str, size: int, runs: tuple[int, int, int], scale: float = 1.0, snapshot_every: int = 25) -> Group:
-    """A main group: band 1's ranges times ``scale`` (bands 2 and 3 are × 2 and × 4)."""
-    base = Group(name="", size=0, train_runs=0, val_runs=0, test_runs=0)
-    return Group(name=name, size=size, train_runs=runs[0], val_runs=runs[1], test_runs=runs[2],
-                 snapshot_every=snapshot_every, period=_scaled(base.period, scale), height=_scaled(base.height, scale),
-                 map_period=_scaled(base.map_period, scale), band_width=_scaled(base.band_width, scale))
+def load_group(profile: str, root: Path | None = None) -> Group:
+    """The group in ``configs/data/<profile>.yaml``, for example ``erosion_master/main_256``. The file must
+    list every field but ``name`` and ``dataset``."""
+    path = (Path(root) if root is not None else DATA_CONFIGS) / f"{profile}.yaml"
+    if profile.count("/") != 1 or not path.exists():
+        raise KeyError(f"no erosion group {profile!r}: expected a file configs/data/<dataset>/<group>.yaml; "
+                       f"groups: {', '.join(group_names(root))}")
+    values = yaml.safe_load(path.read_text()) or {}
+    if values.pop("generator", None) != "erosion":
+        raise ValueError(f"{path}: not an erosion group (generator must be erosion)")
+    required = {f.name for f in fields(Group)} - {"name", "dataset"}
+    missing, unknown = sorted(required - set(values)), sorted(set(values) - required)
+    if missing or unknown:
+        raise ValueError(f"{path}: missing fields {missing}, unknown fields {unknown}")
+    dataset, name = profile.split("/")
+    return Group(name=name, dataset=dataset, **{k: _tuples(v) for k, v in values.items()})
 
 
-def _test_only(name: str, size: int, runs: int, **changes) -> Group:
-    """A test-only group: Perlin, fBm, no warp, uniform map, in-range parameters, plus ``changes``."""
-    return Group(name=name, size=size, train_runs=0, val_runs=0, test_runs=runs, noise_types=("perlin",),
-                 fractal_types=("fbm",), warp_fraction=0.0, maps=UNIFORM_MAP, **changes)
-
-
-GROUPS = {
-    # Seconds on CPU, for tests: every noise choice and map shape, on a tiny grid.
-    "smoke": Group(name="smoke", dataset="erosion_smoke", size=32, train_runs=6, val_runs=3, test_runs=3, steps=20,
-                   snapshot_every=5, period=(8.0, 16.0), map_period=(8.0, 16.0), band_width=(4.0, 8.0), processes=2),
-    "smoke_ood": _test_only("smoke_ood", 32, 3, dataset="erosion_smoke", steps=20, snapshot_every=5,
-                            period=(8.0, 16.0), ood=True, processes=2),
-    # Main groups, one per scale band (track B: main_256; track C: main_512, main_1024, main_2048).
-    "main_256": _main("main_256", 256, (4_000, 400, 400)),
-    "main_512": _main("main_512", 512, (3_000, 300, 300)),
-    "main_1024": _main("main_1024", 1024, (1_200, 150, 150), scale=2, snapshot_every=50),
-    "main_2048": _main("main_2048", 2048, (300, 50, 50), scale=4, snapshot_every=50),
-    # Test-only groups.
-    "ood_256": _test_only("ood_256", 256, 200, ood=True),
-    "ood_512": _test_only("ood_512", 512, 200, ood=True),
-    "long_256": _test_only("long_256", 256, 200, steps=1_500, snapshot_every=50),
-    "long_512": _test_only("long_512", 512, 200, steps=1_500, snapshot_every=50),
-}
+def group_names(root: Path | None = None) -> list[str]:
+    """Every erosion group under ``configs/data/``, as ``<dataset>/<group>``."""
+    root = Path(root) if root is not None else DATA_CONFIGS
+    return sorted(str(p.relative_to(root).with_suffix("")) for p in root.glob("*/*.yaml")
+                  if (yaml.safe_load(p.read_text()) or {}).get("generator") == "erosion")

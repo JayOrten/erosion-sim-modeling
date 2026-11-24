@@ -1,0 +1,5 @@
+# The base cascade, sampled with no blend phases.
+kind: cascade
+levels: [coarse, fine]
+steps: 32
+splits: []

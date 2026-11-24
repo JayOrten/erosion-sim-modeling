@@ -26,7 +26,7 @@ from torch.utils.data import Dataset
 from ..config import Config
 from ..data import table
 from ..data.normalization import dla_conditioning
-from ..paths import code_version, data_root
+from ..paths import code_version, dataset_dir
 from .config import DataConfig
 from .simulate import occupancy, run_seed, simulate
 
@@ -76,15 +76,28 @@ def _simulate_all(tasks: list, processes: int):
         yield from pool.imap_unordered(_run_one, tasks, chunksize=max(1, len(tasks) // (16 * processes)))
 
 
-def make_split(cfg: DataConfig, split: str, out_dir: Path | None = None, progress_every: int = 0) -> Path:
-    """Simulate every run of one split and write it to ``out_dir`` (default ``artifacts/data/<profile>/<split>``).
+class SettingsChanged(RuntimeError):
+    """A split on disk was made with settings its dataset file no longer gives."""
+
+
+def make_split(cfg: DataConfig, split: str, out_dir: Path | None = None, progress_every: int = 0,
+               processes: int | None = None) -> Path:
+    """Simulate every run of one split and write it to ``out_dir`` (default ``artifacts/data/<profile>/<split>``),
+    on ``processes`` processes (default: every core this process may use; on Slurm, the job's).
 
     Runs are a fixed function of the profile, the split, and the run index, so the result does not
-    depend on the number of processes.
+    depend on the number of processes. A finished split with the same settings is left as it is; one
+    made with other settings raises ``SettingsChanged``.
     """
-    out_dir = Path(out_dir) if out_dir is not None else data_root(cfg.profile) / split
+    out_dir = Path(out_dir) if out_dir is not None else dataset_dir(cfg.profile) / split
+    meta_path = out_dir / "meta.json"
+    if meta_path.exists():
+        if json.loads(meta_path.read_text())["config"] != json.loads(json.dumps(asdict(cfg))):
+            raise SettingsChanged(f"{out_dir} was made with other settings than configs/data/{cfg.profile}.yaml "
+                                  "gives. Undo the edit and use a new dataset file, or delete the folder.")
+        print(f"{out_dir} is finished; skipping", flush=True)
+        return out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "meta.json").unlink(missing_ok=True)
     columns = plan_split(cfg, split)
     starts = shared_starts(cfg) if split == "test" else None
     tasks = [(i, float(columns["p"][i]), int(columns["seed"][i]), cfg.particles, cfg.size,
@@ -93,7 +106,7 @@ def make_split(cfg: DataConfig, split: str, out_dir: Path | None = None, progres
     arrivals = np.empty((len(tasks), cfg.size, cfg.size), dtype=np.int16)
     # The cores this process may use: on a Slurm node, the job's cores, not the whole node's.
     cores = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
-    processes = min(cfg.processes or cores or 1, len(tasks))
+    processes = min(processes or cores or 1, len(tasks))
     start = time.perf_counter()
     for done, (i, arrival) in enumerate(_simulate_all(tasks, processes), start=1):
         arrivals[i] = arrival
@@ -120,7 +133,7 @@ class DLASplit:
 
     @classmethod
     def open(cls, profile: str, split: str, root: Path | None = None) -> "DLASplit":
-        return cls(data_root(profile, root) / split)
+        return cls(dataset_dir(profile, root) / split)
 
     @property
     def arrivals(self) -> np.ndarray:
@@ -141,7 +154,7 @@ class DLASplit:
 class DLAPairs(Dataset):
     """Training pairs from the selected runs, ``repeats`` items per run, each with its own ``t`` and ``x``.
 
-    - ``t``: uniform over ``t_range`` (both ends included). Default 1 to 90% of the particle count.
+    - ``t``: uniform over ``t_range`` (both ends included).
     - ``x``: log-uniform over 1 to ``particles - t``, as an integer.
 
     Each item's ``t`` and ``x`` are a fixed function of ``seed`` and the item index, so a fixed validation
@@ -151,14 +164,13 @@ class DLAPairs(Dataset):
     ``cond`` (2,) ``dla_conditioning(p, x)``; and ``run``, ``t``, ``steps`` (the jump ``x``) as integers.
     """
 
-    def __init__(self, data: DLASplit, runs=None, repeats: int = 1, seed: int = 0,
-                 t_range: tuple[int, int] | None = None):
+    def __init__(self, data: DLASplit, t_range: tuple[int, int], runs=None, repeats: int = 1, seed: int = 0):
         self.data = data
         self.runs = np.arange(len(data)) if runs is None else np.asarray(runs)
         self.repeats, self.seed = repeats, seed
         self.particles = data.config["particles"]
         self.p_range = tuple(data.config["p_range"])
-        self.t_range = t_range or (1, int(0.9 * self.particles))
+        self.t_range = tuple(t_range)
         if not 1 <= self.t_range[0] <= self.t_range[1] < self.particles:
             raise ValueError(f"t_range {self.t_range} must lie in 1 .. {self.particles - 1}")
 
@@ -199,7 +211,7 @@ def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[DLAPairs,
     """DLA training and validation pairs for ``cfg``, and ``sigma_data``, the standard deviation of the
     training target. There is no fitted scaling: the conditioning ranges are fixed by the dataset."""
     train_data, val_data = (DLASplit.open(cfg.data_profile, split, data_root) for split in ("train", "val"))
-    train_runs, val_runs = (data.select(**dict(cfg.data)) for data in (train_data, val_data))
-    train = DLAPairs(train_data, runs=train_runs, repeats=cfg.repeats, seed=cfg.seed, t_range=cfg.t_range)
-    val = DLAPairs(val_data, runs=val_runs, seed=cfg.seed, t_range=cfg.t_range)
+    train_runs, val_runs = (data.select(**cfg.data) for data in (train_data, val_data))
+    train = DLAPairs(train_data, cfg.t_range, runs=train_runs, repeats=cfg.repeats, seed=cfg.seed)
+    val = DLAPairs(val_data, cfg.t_range, runs=val_runs, seed=cfg.seed)
     return train, val, target_std(train, seed=cfg.seed)

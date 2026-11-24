@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from erosion_terrain import TERRAIN_FIELDS, ErodibilityMap, Terrain, map_from_columns
 
-from ..paths import data_root
+from ..paths import dataset_dir
 from . import table
 
 
@@ -38,7 +38,7 @@ class Split:
     def open(cls, profile: str, split: str, root: Path | None = None) -> "Split":
         """``artifacts/data/<profile>/<split>/``, or ``<root>/<split>/`` when ``root`` is given. For an
         ``erosion_master`` group, ``profile`` is ``"erosion_master/<group>"``."""
-        return cls(data_root(profile, root) / split)
+        return cls(dataset_dir(profile, root) / split)
 
     @property
     def snapshots(self) -> np.ndarray:

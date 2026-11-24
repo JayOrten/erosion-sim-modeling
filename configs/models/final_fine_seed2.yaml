@@ -5,9 +5,8 @@ backbone: unet
 objective: edm
 residual_of: null
 teacher: null
-data: []
+data: {}
 max_runs: null
-lags: null
 fixed_edges: false
 cell: 1
 window: 128
@@ -19,7 +18,6 @@ augment: true
 inputs: []
 drainage_weight: 0.0
 t_range: null
-max_train_samples: null
 channels: [32, 64, 128, 256]
 blocks: 1
 emb_dim: 256
@@ -35,7 +33,6 @@ batch_size: 32
 lr: 0.0003
 weight_decay: 0.0001
 steps: 400000
-epochs: null
 warmup_steps: 500
 ema_decay: 0.999
 eval_every: 1000

@@ -2,7 +2,6 @@
 
 - ``window_disagreement``: how much neighboring windows of a level disagree where they overlap, before
   blending (seams).
-- ``edge_profile``: a level's change against distance from its own window edge.
 - ``order_invariance``: whether query order and clearing the cache change results.
 - ``chunked_vs_whole``: whether a region asked for chunk by chunk, each from a new world, equals one query.
 - ``query_times``: time of first and repeat queries.
@@ -46,23 +45,6 @@ def window_disagreement(level: Level, y0: int = 0, x0: int = 0, windows: int = 6
         scale = float(np.sqrt(np.mean(level.to_meters((blended[0] / blended[1]).double().numpy()) ** 2)))
         result.append({"phase": phase, "rms": rms, "relative": rms / scale})
     return {"phases": result}
-
-
-def edge_profile(level: Level, windows: int = 6) -> dict:
-    """Mean absolute change of a level's own window outputs against distance from the window edge.
-
-    A model trained on whole simulator runs learns that the simulator's edges do not change, and puts
-    that at every window edge. Inside the world, window edges are not boundaries, so a dip here shows up
-    as seams. Returns ``distance`` (cells) and ``mean_abs_change`` (m).
-    """
-    ctxs = [(0, i, j) for i in range(windows) for j in range(windows)]
-    own = level.window_outputs(ctxs)[-1]
-    n = level.window
-    i = np.arange(n)
-    distance = np.minimum.reduce(np.meshgrid(np.minimum(i, n - 1 - i), np.minimum(i, n - 1 - i), indexing="ij"))
-    d = np.arange(n // 2)
-    profile = np.array([np.abs(own[:, distance == k]).mean() for k in d])
-    return {"distance": d, "mean_abs_change": profile}
 
 
 def order_invariance(make_world: Callable[[], World], regions: int = 12, size: int = 96, spread: int = 2_000,

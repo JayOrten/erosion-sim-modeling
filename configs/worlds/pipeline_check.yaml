@@ -1,4 +1,0 @@
-# Two levels on one fixed noise setup.
-levels: [coarse_pipeline_check, fine_pipeline_check]
-steps: 32
-splits: [5.0]

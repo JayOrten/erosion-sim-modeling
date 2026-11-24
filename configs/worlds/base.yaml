@@ -1,4 +1,0 @@
-# The base world: two levels, 4 m and 1 m.
-levels: [coarse, fine]
-steps: 32
-splits: [5.0]

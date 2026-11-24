@@ -26,10 +26,9 @@ def test_conditioning_is_in_unit_range_on_fitted_data(dataset, scaling):
     assert cond.min() >= -1e-6 and cond.max() <= 1 + 1e-6
 
 
-def test_lags_and_run_selection(dataset, scaling):
+def test_run_selection(dataset, scaling):
     runs = dataset.select(U=0)
     np.testing.assert_array_equal(runs, [0, 1])
-    data = ErosionPairs(dataset, scaling, runs=runs, lags=[2])
-    assert len(data) == 2 * (SNAPS - 2)
-    assert all(data[i]["end"] - data[i]["start"] == 2 for i in range(len(data)))
+    data = ErosionPairs(dataset, scaling, runs=runs)
+    assert len(data) == 2 * SNAPS * (SNAPS - 1) // 2
     assert {data[i]["run"] for i in range(len(data))} == {0, 1}

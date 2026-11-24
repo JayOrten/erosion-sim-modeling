@@ -1,0 +1,5 @@
+# The base cascade with the fine level trained with coarse-input noise 0.1.
+kind: cascade
+levels: [coarse, fine_context_noise_01]
+steps: 32
+splits: [5.0]

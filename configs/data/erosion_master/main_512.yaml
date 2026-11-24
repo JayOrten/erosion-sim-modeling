@@ -1,0 +1,29 @@
+# Track C's band 1 data: scale band 1 on 512² runs.
+generator: erosion
+size: 512
+train_runs: 3000
+val_runs: 300
+test_runs: 300
+steps: 500
+snapshot_every: 25
+dt: 100.0
+cell_size: 1.0
+period: [32.0, 64.0]
+height: [32.0, 128.0]
+octaves: [4, 7]
+persistence: [0.35, 0.65]
+lacunarity: [1.8, 2.4]
+noise_types: [perlin, opensimplex2, value_cubic]
+fractal_types: [fbm, ridged]
+warp_fraction: 0.5
+warp: [0.1, 0.5]
+K_ref: [0.0001, 0.0005]
+D_over_K: [0.3, 3.0]
+m: [0.3, 0.6]
+m_ref: 0.4
+A_ref: 30.0
+maps: [[uniform, 0.6666666666666666], [patches, 0.16666666666666666], [bands, 0.16666666666666666]]
+map_contrast: [1.0, 10.0]
+map_period: [32.0, 128.0]
+band_width: [8.0, 64.0]
+ood_ranges: []

@@ -1,0 +1,4 @@
+# Smoke: the simulator on closed 16² chunks.
+kind: baseline
+method: simulator_chunks
+chunk: 16

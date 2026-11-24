@@ -1,18 +1,15 @@
-# World query time, on 4 runs of 512², no baselines.
+# World, on 4 runs of 512²: enough to time queries.
 suite: world
 data_profile: erosion_master/main_512
 split: test
-data: []
+data: {}
 runs: 4
 ends_yr: [25000.0, 50000.0]
 margin: 32
 steps: 32
-splits: [5.0]
 level_pairs_per_run: 4
-baselines: []
 chunk: 256
 chunk_edge: 16
-chunk_model: null
 seams: true
 seam_windows: 4
 batch_size: 16

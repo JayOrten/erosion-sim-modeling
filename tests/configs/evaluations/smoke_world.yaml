@@ -1,0 +1,18 @@
+# World smoke.
+suite: world
+data_profile: erosion_smoke/smoke
+split: test
+data: {}
+runs: 2
+ends_yr: [1000.0, 2000.0]
+margin: 4
+steps: 2
+level_pairs_per_run: 2
+chunk: 16
+chunk_edge: 2
+seams: true
+seam_windows: 2
+batch_size: 16
+examples: 2
+seed: 0
+bf16: true

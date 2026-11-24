@@ -61,7 +61,7 @@ def plot_spectrum(results: Results, kinds=("baseline", "model", "postprocessed")
     a = results.arrays
     fig, ax = plt.subplots(figsize=(6, 3.8), layout="constrained")
     for entry in entries(results, kinds):
-        if entry != "no change":
+        if results.manifest["entries"][entry].get("method") != "no_change":
             ax.semilogx(a["spectrum/wavelength"], a[f"spectrum/{entry}"] / a["spectrum/simulator"], label=entry)
     ax.axhline(1, color="black", lw=0.8)
     ax.invert_xaxis()
@@ -75,7 +75,7 @@ def plot_spectrum(results: Results, kinds=("baseline", "model", "postprocessed")
 def plot_examples(results: Results, kinds=("baseline", "model"), show: bool = True):
     """For each example pair: the start terrain, then the change of the simulator and of each entry."""
     ex = results.examples
-    names = [e for e in entries(results, kinds) if e != "no change"]
+    names = [e for e in entries(results, kinds) if results.manifest["entries"][e].get("method") != "no_change"]
     count = len(ex["z_a"])
     fig, axes = plt.subplots(count, 2 + len(names), figsize=(2.6 * (2 + len(names)), 2.6 * count), squeeze=False,
                              layout="constrained")

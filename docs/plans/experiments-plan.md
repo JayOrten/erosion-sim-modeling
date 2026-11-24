@@ -10,7 +10,7 @@ Run the experiments for a paper on the infinite eroded world, aimed at SIGGRAPH.
 - Make every experiment one named entry that trains and evaluates with one command.
 - Run the experiments in three phases. Each phase can change the next.
 
-This plan replaces step 9 of `infinite-plan.md`. The old `full`, `world`, and `world_master` datasets
+This plan replaces step 9 of `done/infinite-plan.md`. The old `full`, `world`, and `world_master` datasets
 were made before the review branch. They are deleted, not reused.
 
 ## Claims
@@ -80,7 +80,7 @@ Conventions:
 ## Compute
 
 - **Data:** this machine's CPU. 512² runs reach about 27 M cell-steps per second with 16 workers,
-  1024² runs about 21 M (`infinite-plan.md` step 9a).
+  1024² runs about 21 M (`done/infinite-plan.md` step 9a).
 - **Training:** this machine's GPU, an RTX 4080 Laptop with 12 GB. An A100 cluster is available, at
   the cost of Slurm (the cluster's job scheduler) setup and data transfer. Use it only if phase 1
   shows the local GPU is too slow.
@@ -293,7 +293,7 @@ trains fast.
 One table. One row is one simulator run. A **group** is a block of rows made with the same generator
 settings (grid size, ranges, run counts). Experiments select rows by group, split, and filter.
 
-Old names, for reading `infinite-plan.md`: `master_closed` → `main_256`, `master` → `main_512`,
+Old names, for reading `done/infinite-plan.md`: `master_closed` → `main_256`, `master` → `main_512`,
 `master_large` → `main_1024`, `master_huge` → `main_2048`, `_closed` test sets → `_256` groups.
 
 #### One run
@@ -766,7 +766,7 @@ The existing two-level world (`world/`), with the track B recipe from phase 1 fo
   coarse cells (256 m, about 4 periods at period 64).
 - Fine level: 1 m cells. Window 128 cells (about 2 periods). A second input channel holds the coarse
   level's change, upsampled to 1 m *(current)*.
-- Window sizes follow `infinite-plan.md`: coarse about 4 periods, fine about 2. With varied noise the
+- Window sizes follow `done/infinite-plan.md`: coarse about 4 periods, fine about 2. With varied noise the
   feature size per period ranges from 0.4 to 2.7 (`docs/notes/datagen-measurements.md`); the noise is
   there for variety, and the period is not corrected per noise type.
 - Each level: the track B backbone, objective, and conditioning from phase 1. No fixed edges: a window
@@ -959,7 +959,7 @@ Choices this plan makes that were not settled before.
 ## Steps
 
 How the code was built for these experiments, step by step, and what was built differently: see
-`implementation-plan.md`. Running them: `README.md`, "Use".
+`done/implementation-plan.md`. Running them: `README.md`, "Use".
 
 ## Open questions
 

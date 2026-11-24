@@ -2,14 +2,13 @@
 suite: erosion
 data_profile: erosion_master/long_256
 split: test
-data: []
+data: {}
 runs: null
 pairs_per_run: 4
 ends_yr: [50000.0, 100000.0, 150000.0]
 samples: 1
 steps: 32
 step_sweep: null
-baselines: [analytical]
 fill_pits: false
 chains: [[3, 50000.0], [6, 25000.0], [15, 10000.0]]
 batch_size: 32

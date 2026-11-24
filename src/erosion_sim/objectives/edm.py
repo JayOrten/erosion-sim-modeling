@@ -29,7 +29,7 @@ P_STD = 1.2
 RHO = 7.0
 # Our choices, not from EDM:
 # - Default sampler steps. EDM's deterministic sampler used 18 steps on CIFAR-10 and 40 on
-#   FFHQ and AFHQv2; 32 is a starting point (docs/plans/diffusion-plan.md).
+#   FFHQ and AFHQv2; 32 is a starting point (docs/plans/done/diffusion-plan.md).
 DEFAULT_STEPS = 32
 # - Validation uses fixed noise levels, the 1/16, 3/16, ..., 15/16 quantiles of the training
 #   distribution, so their average loss tracks the training loss without random noise levels.
@@ -135,7 +135,7 @@ def sigma_steps(steps: int, sigma_data: float) -> torch.Tensor:
 def phase_sigmas(steps: int, sigma_data: float, splits: tuple[float, ...] = ()) -> list[torch.Tensor]:
     """The sampler schedule cut into phases at the noise levels ``splits`` (multiples of ``sigma_data``).
 
-    InfiniteDiffusion blends overlapping windows between phases (docs/plans/infinite-plan.md, "Why
+    InfiniteDiffusion blends overlapping windows between phases (docs/plans/done/infinite-plan.md, "Why
     T = 2"). Each phase starts at the noise level the one before ends at, so running them one after the
     other is exactly one full run. A split falls on the first schedule level at or below it. With no
     splits there is one phase, the whole schedule.

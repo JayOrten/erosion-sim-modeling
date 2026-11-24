@@ -1,4 +1,0 @@
-# Band 3, three levels: 16 m, 4 m, 1 m.
-levels: [band3_three_16m, band3_three_4m, band3_three_1m]
-steps: 32
-splits: [5.0]

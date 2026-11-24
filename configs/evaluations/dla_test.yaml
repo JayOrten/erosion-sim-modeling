@@ -6,5 +6,4 @@ batch_size: 64
 seed: 0
 examples: 4
 bf16: true
-only: null
 step_sweep: null

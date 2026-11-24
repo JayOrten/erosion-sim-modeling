@@ -94,17 +94,18 @@ rather than importing across repositories.
 - **Environment.** Use `uv`. Install with `uv sync`; run with `uv run`. Commit `uv.lock`.
 - **Layout.** Source in `src/<package>/`, installed editably via setuptools. Tests in `tests/`.
   Notebooks in `notebooks/experiments/`, one per experiment: the commands it needs, then its analysis. Plans in
-  `docs/plans/`, measurements and findings in `docs/notes/`. `README.md` lists every module.
+  `docs/plans/` (finished ones in `docs/plans/done/`), measurements and findings in `docs/notes/`, how to
+  read each suite's results in `docs/guides/`. `README.md` lists every module.
 - **Modules.** Shared code is split by role into packages: `data/`, `models/`, `objectives/`,
   `training/`, `evaluation/`. Each track has its own package: `dla/` (A), `erosion/` (B), `world/` (C).
   `data/`, `models/`, and `objectives/` never import a track package; `training/` imports `dla/data.py`
   to build DLA datasets. File locations go through `paths.py`. Conversion to
   and from model units goes through `data/normalization.py`. Do not repeat either elsewhere.
-- **Configs.** Models, evaluations, and worlds are YAML files in `configs/`, one per name, flat (no file
-  refers to another for its settings). Experiments are notebooks only; no code names an experiment. A
+- **Configs.** Datasets, models, predictors (cascades and baselines), and evaluations are YAML files in `configs/`, one per name, flat
+  (every field listed; no file refers to another for its settings). Experiments are notebooks only; no code names an experiment. A
   model or evaluation file is not edited once it has been used: a change goes in a new file. Always
-  include tiny `smoke` configs that run in seconds on CPU. Dataset settings (`dla/config.py`,
-  `datagen/`) are frozen dataclasses plus a `PROFILES` dict.
+  include tiny `smoke` configs, in `tests/configs/`, that run in seconds on CPU. Each kind of file is read into a frozen
+  dataclass (`Config`, `DataConfig`, `Group`, a suite's `Settings`).
 - **Simulators.** Write custom simulators in Numba when existing packages do not fit. Record why an
   existing package was rejected in `docs/`. Numba random state is per thread, so build datasets with
   one seed per process.
@@ -115,7 +116,7 @@ rather than importing across repositories.
 - **Evaluation.** Experiment functions return their results. Plotting and printing are on by default;
   tests pass `show=False`.
 - **Baselines.** Every model is compared against the simulator and at least one simple baseline.
-- **Tests.** `uv run pytest`. Tests use the `smoke` profile.
+- **Tests.** `uv run pytest`. Tests use the `smoke` configs in `tests/configs/`.
 
 ## How to work
 

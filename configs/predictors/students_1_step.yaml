@@ -1,0 +1,5 @@
+# The final cascade's distilled students, at 1 sampler step.
+kind: cascade
+levels: [coarse_student, fine_student]
+steps: 1
+splits: [5.0]

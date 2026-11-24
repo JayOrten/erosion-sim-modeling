@@ -1,0 +1,5 @@
+# The final cascade, seed 0.
+kind: cascade
+levels: [final_coarse_seed0, final_fine_seed0]
+steps: 32
+splits: [5.0]

@@ -31,14 +31,14 @@ ARTIFACTS_DIR = _artifacts_dir()
 DATA_DIR = ARTIFACTS_DIR / "data"
 MODELS_DIR = ARTIFACTS_DIR / "models"
 RESULTS_DIR = ARTIFACTS_DIR / "results"
-DATAGEN_DIR = REPO_DIR / "datagen"
 CONFIGS_DIR = REPO_DIR / "configs"
 
 
-def data_root(profile: str, root: Path | None = None) -> Path:
-    """The folder holding a dataset profile's splits: ``root`` if given (tests pass a temporary one),
-    else ``artifacts/data/<profile>``."""
-    return Path(root) if root is not None else DATA_DIR / profile
+def dataset_dir(profile: str, root: Path | None = None) -> Path:
+    """The folder holding a dataset's splits: ``<root or artifacts/data>/<profile>``. Tests pass a
+    temporary ``root``, as the other ``*_root`` arguments replace ``artifacts/models`` and
+    ``artifacts/results``."""
+    return (Path(root) if root is not None else DATA_DIR) / profile
 
 
 def model_dir(name: str, root: Path | None = None) -> Path:

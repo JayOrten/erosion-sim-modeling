@@ -2,7 +2,7 @@
 
 A diffusion sample starts from Gaussian noise. In the world, overlapping windows must start from the
 same noise where they overlap, so the noise belongs to world coordinates, not to windows
-(docs/plans/infinite-plan.md, step 2).
+(docs/plans/done/infinite-plan.md, step 2).
 
 Gaussian noise has no formula per cell, so the plane is split into fixed square tiles. Each tile has
 its own random stream, seeded from SHA-256 of (seed, level, tile row, tile column) into NumPy's PCG64.

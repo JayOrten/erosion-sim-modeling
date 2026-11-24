@@ -102,7 +102,7 @@ class ErosionPairs(Dataset):
       rotation per item, since the world has no preferred direction.
 
     Crops, flips, and noise are a fixed function of (``seed``, item index), so items are reproducible and a
-    resumed run sees the same items. ``lags`` limits the elapsed times, in snapshot steps.
+    resumed run sees the same items.
 
     Each item is a dict: ``x`` (channels, h, w) inputs (``input_channels``); ``y`` (1, h, w) the change in
     model units, ``scaling.change.to_model(z_b - z_a, K_ref, dT)``; ``cond`` the scaled parameters; ``z_a``,
@@ -110,7 +110,7 @@ class ErosionPairs(Dataset):
     1 m cell; ``flip`` the flip number; and ``weight`` (1, h, w) when ``drainage_weight`` is set.
     """
 
-    def __init__(self, data: Split, scaling: Scaling, runs: np.ndarray | None = None, lags=None, cell: int = 1,
+    def __init__(self, data: Split, scaling: Scaling, runs: np.ndarray | None = None, cell: int = 1,
                  window: int | None = None, context_cell: int | None = None, margin: int = 0, repeats: int = 1,
                  augment: bool = False, inputs: tuple[str, ...] = (), drainage_weight: float = 0.0,
                  context_noise: float = 0.0, seed: int = 0):
@@ -121,9 +121,6 @@ class ErosionPairs(Dataset):
         self.runs = np.arange(len(data)) if runs is None else np.asarray(runs)
         count = len(self.times)
         pairs = [(a, b) for a in range(count) for b in range(a + 1, count)]
-        if lags is not None:
-            lags = set(int(k) for k in lags)
-            pairs = [(a, b) for a, b in pairs if b - a in lags]
         self.pairs = np.array(pairs, dtype=np.int64).reshape(-1, 2)
         self.cell, self.window, self.context_cell = cell, window, context_cell
         self.margin, self.repeats, self.augment, self.seed = margin, repeats, augment, seed
@@ -211,12 +208,12 @@ def make_datasets(cfg: Config, data_root: Path | None = None) -> tuple[ErosionPa
     """Erosion training and validation items for ``cfg``, the ``Scaling`` fitted on the training runs (on
     ``cfg.cell`` block means), and ``sigma_data``, the RMS of the training target."""
     train_data, val_data = (Split.open(cfg.data_profile, split, data_root) for split in ("train", "val"))
-    train_runs, val_runs = (data.select(**dict(cfg.data)) for data in (train_data, val_data))
+    train_runs, val_runs = (data.select(**cfg.data) for data in (train_data, val_data))
     train_runs = train_runs[: cfg.max_runs]
     snapshots, columns, times = train_data.snapshots, train_data.columns, train_data.times
     scaling = Scaling.fit(snapshots, columns, train_runs, times, block=cfg.cell)
     sigma_data = change_rms(snapshots, columns, train_runs, times, scaling.change, block=cfg.cell)
-    common = dict(lags=cfg.lags, cell=cfg.cell, window=cfg.window, context_cell=cfg.context_cell, margin=cfg.margin,
+    common = dict(cell=cfg.cell, window=cfg.window, context_cell=cfg.context_cell, margin=cfg.margin,
                   inputs=cfg.inputs, seed=cfg.seed)
     train = ErosionPairs(train_data, scaling, train_runs, repeats=cfg.repeats, augment=cfg.augment,
                          drainage_weight=cfg.drainage_weight, context_noise=cfg.context_noise, **common)

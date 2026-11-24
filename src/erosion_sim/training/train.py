@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Sampler, Subset
 
-from ..config import NOT_TRAINING, Config, config_from_dict, config_to_json
+from ..config import Config, config_to_json
 from ..data.pairs import make_datasets as make_erosion_datasets
 from ..dla.data import make_datasets as make_dla_datasets
 from ..models.layers import count_parameters
@@ -22,6 +22,7 @@ from ..objectives.residual import residual_rms
 from ..paths import code_version, model_dir
 from ..seeding import step_generator
 from .checkpoints import build_model, load_checkpoint
+from .run import check_stored_config
 
 
 class _OrderSampler(Sampler):
@@ -139,8 +140,8 @@ def train(cfg: Config, out: Path, data_root: Path | None = None, show: bool = Fa
     checkpoint also keeps the training weights, as ``"train_model"``, for resuming.
 
     If ``last.pt`` exists, training resumes from it: model, optimizer, learning-rate schedule, history,
-    and position in the training order. The config must match the saved one, except for the fields in
-    ``config.NOT_TRAINING``. A resumed run gives the same result as an uninterrupted one. So if a job dies,
+    and position in the training order. The config must match the one in ``config.json``, except for the
+    fields in ``config.NOT_TRAINING`` (``run.check_stored_config``). A resumed run gives the same result as an uninterrupted one. So if a job dies,
     submitting it again continues from the last evaluation.
 
     With ``cfg.residual_of``, the model samples the residual of that regression model; with ``cfg.teacher``,
@@ -186,11 +187,7 @@ def train(cfg: Config, out: Path, data_root: Path | None = None, show: bool = Fa
                 raise ValueError("teacher must name an EDM model")
             teacher, sigma_data = other, other.sigma_data
     rng = np.random.default_rng(cfg.seed)
-    if cfg.max_train_samples is not None:
-        train_data = Subset(train_data, rng.choice(len(train_data), cfg.max_train_samples, replace=False))
     val_subset = Subset(val_data, rng.choice(len(val_data), min(cfg.val_samples, len(val_data)), replace=False))
-    if cfg.epochs is not None:
-        cfg = replace(cfg, steps=math.ceil(cfg.epochs * len(train_data) / cfg.batch_size))
 
     loader_args = dict(batch_size=cfg.batch_size, num_workers=cfg.num_workers, pin_memory=use_cuda,
                        persistent_workers=cfg.num_workers > 0)
@@ -208,11 +205,8 @@ def train(cfg: Config, out: Path, data_root: Path | None = None, show: bool = Fa
                "objective": cfg.objective, "sessions": []}
     best, since_best, done = math.inf, 0, 0
     if last_path.exists():
+        check_stored_config(out, cfg)
         saved = torch.load(last_path, map_location=device, weights_only=False)
-        saved_cfg = asdict(config_from_dict(saved["config"]))
-        changed = {k for k, v in asdict(cfg).items() if saved_cfg[k] != v} - NOT_TRAINING
-        if changed:
-            raise ValueError(f"config differs from {last_path} in {sorted(changed)}; cannot resume")
         model.load_state_dict(saved["train_model"] if ema is not None else saved["model"])
         if ema is not None:
             ema.load_state_dict(saved["model"])
@@ -225,7 +219,7 @@ def train(cfg: Config, out: Path, data_root: Path | None = None, show: bool = Fa
     else:
         _write_json(out / "config.json", {"config": config_to_json(cfg), "code": code_version()})
     # One entry per training session (the first, and each resume), so a model resumed under changed code says so.
-    history.setdefault("sessions", []).append({"start_step": done, "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    history["sessions"].append({"start_step": done, "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                                                **code_version()})
 
     order = training_order(len(train_data), cfg.steps * cfg.batch_size, cfg.seed)[done * cfg.batch_size:]

@@ -42,12 +42,12 @@ from .simulate import occupancy
 
 @dataclass(frozen=True)
 class Settings:
+    data_profile: str | None = None  # test dataset; None uses the first model's training dataset
     steps: int = DEFAULT_STEPS  # sampler steps
     batch_size: int = 64
     seed: int = 0  # noise keys are (seed, condition, sample index), the same for every model
     examples: int = 4  # clusters kept per condition for figures
     bf16: bool = True
-    only: str | None = None  # score only conditions whose name starts with this, e.g. "p="
     step_sweep: tuple[int, ...] | None = None  # score every model at each of these step counts
 
 
@@ -72,20 +72,20 @@ def conditions(test: DLASplit) -> list[Condition]:
     return out
 
 
-def evaluate_dla(models: dict[str, Path], out: Path, data_profile: str | None = None, data_root: Path | None = None,
-                 settings: Settings = Settings(), device: str | None = None, record: dict | None = None) -> Path:
+def evaluate_dla(models: dict[str, Path], out: Path, data_root: Path | None = None, settings: Settings = Settings(),
+                 device: str | None = None, record: dict | None = None) -> Path:
     """Score each model (name -> model folder) on every test condition and write the results to ``out``.
 
-    The test split is ``data_profile``'s (default: the first model's training dataset). ``data_root``
-    overrides where it is read from, as in training.
+    The test split is ``settings.data_profile``'s (default: the first model's training dataset).
+    ``data_root`` replaces ``artifacts/data``, as in training.
     """
     loaded = {label: load_checkpoint(folder, device=device) for label, folder in models.items()}
     first_cfg = next(iter(loaded.values()))[2]
-    test = DLASplit.open(data_profile or first_cfg.data_profile, "test", data_root)
+    test = DLASplit.open(settings.data_profile or first_cfg.data_profile, "test", data_root)
     particles, p_range = test.config["particles"], tuple(test.config["p_range"])
     edges = np.arange(0, test.config["size"] // 2 + 1, 2.0)
 
-    conds = [c for c in conditions(test) if settings.only is None or c.name.startswith(settings.only)]
+    conds = conditions(test)
     scalars, arrays, examples = {}, {"radial_edges": edges}, {}
     simulated = {}
     for cond in conds:
@@ -138,6 +138,7 @@ def evaluate_dla(models: dict[str, Path], out: Path, data_profile: str | None = 
 
 @dataclass(frozen=True)
 class AgreementSettings:
+    data_profile: str | None = None  # test dataset; None uses the first model's training dataset
     steps: int = DEFAULT_STEPS
     batch_size: int = 64
     seed: int = 0
@@ -157,9 +158,9 @@ def missing_fraction(small: np.ndarray, large: np.ndarray) -> np.ndarray:
     return missing / np.maximum(small.reshape(len(small), -1).sum(axis=1), 1)
 
 
-def evaluate_agreement(models: dict[str, Path], out: Path, data_profile: str | None = None,
-                       data_root: Path | None = None, settings: AgreementSettings = AgreementSettings(),
-                       device: str | None = None, record: dict | None = None) -> Path:
+def evaluate_agreement(models: dict[str, Path], out: Path, data_root: Path | None = None,
+                       settings: AgreementSettings = AgreementSettings(), device: str | None = None,
+                       record: dict | None = None) -> Path:
     """Agreement across steps, written as a results folder.
 
     - Containment: from each start, samples at every jump size share one noise key. For every pair of
@@ -174,7 +175,7 @@ def evaluate_agreement(models: dict[str, Path], out: Path, data_profile: str | N
     ``[model]["chain"]["<n>x<jump>"][metric]`` (a ``metrics.compare`` dict, pooled over shared starts).
     """
     loaded = {label: load_checkpoint(folder, device=device) for label, folder in models.items()}
-    test = DLASplit.open(data_profile or next(iter(loaded.values()))[2].data_profile, "test", data_root)
+    test = DLASplit.open(settings.data_profile or next(iter(loaded.values()))[2].data_profile, "test", data_root)
     cfg, cols = test.config, test.columns
     particles, p_range, t0 = cfg["particles"], tuple(cfg["p_range"]), cfg["start_particles"]
     room = particles - t0

@@ -4,46 +4,76 @@ import shutil
 import numpy as np
 import pytest
 import yaml
+from conftest import CONFIGS
 
-from erosion_sim.config import config_names, model_config
+from erosion_sim.config import (
+    check_data_profile,
+    config_names,
+    data_names,
+    model_config,
+)
 from erosion_sim.evaluation.evaluate import (
     EvaluationChanged,
     _settings,
     evaluate,
     evaluation_config,
-    world_config,
+    predictor_config,
 )
 from erosion_sim.evaluation.results import list_results, load, read_results
 from erosion_sim.paths import CONFIGS_DIR
 from erosion_sim.training.run import ConfigChanged, train_model
 
 
-def test_every_config_file_loads():
-    for name in config_names("models"):
-        cfg = model_config(name)
+@pytest.fixture(scope="module")
+def all_configs(tmp_path_factory):
+    """The repo's configs/ and the tests' own configs, in one folder: tests use both."""
+    root = tmp_path_factory.mktemp("configs")
+    shutil.copytree(CONFIGS_DIR, root, dirs_exist_ok=True)
+    shutil.copytree(CONFIGS, root, dirs_exist_ok=True)
+    return root
+
+
+@pytest.mark.parametrize("which", ["repo", "tests"])
+def test_every_config_file_loads(which, all_configs):
+    # Each folder's files load, and every name they refer to exists (tests' files may use the repo's).
+    own = CONFIGS_DIR if which == "repo" else CONFIGS
+    refs = CONFIGS_DIR if which == "repo" else all_configs
+    for name in config_names("models", own):
+        cfg = model_config(name, own)
         assert cfg.name == name
+        check_data_profile(cfg.data_profile, refs)
         for other in (cfg.residual_of, cfg.teacher):
-            assert other is None or other in config_names("models"), (name, other)
-    for name in config_names("evaluations"):
-        values = evaluation_config(name)
-        rest = {k: v for k, v in values.items() if k != "suite"}
-        if values["suite"] != "erosion":
-            rest.pop("data_profile")
-        _settings(values["suite"], rest)
-        if values.get("chunk_model"):
-            assert values["chunk_model"] in config_names("models")
-    assert not set(config_names("worlds")) & set(config_names("models"))
+            assert other is None or other in config_names("models", refs), (name, other)
+    for name in config_names("evaluations", own):
+        values = evaluation_config(name, own)
+        check_data_profile(values["data_profile"], refs)
+        _settings(values["suite"], {k: v for k, v in values.items() if k != "suite"})
+    assert not set(config_names("predictors", refs)) & set(config_names("models", refs))
+    for name in config_names("predictors", own):
+        spec = predictor_config(name, refs)
+        for model in spec.get("levels", []) + ([spec["model"]] if "model" in spec else []):
+            assert model in config_names("models", refs), (name, model)
+    from erosion_sim.dla.config import data_config
+
+    for name in data_names(own):
+        if name.startswith("dla"):
+            assert data_config(name, own).profile == name
+    with pytest.raises(KeyError):
+        check_data_profile("main_256", refs)
 
 
-def test_every_world_is_a_valid_stack_that_fits_its_runs():
+def test_every_cascade_is_a_valid_stack_that_fits_its_runs(all_configs):
     from erosion_sim.world.world import check_stack
 
     def run_size(profile: str) -> int:
         group = profile.split("/")[1]
         return 32 if group == "smoke" else int(group.rsplit("_", 1)[1])
 
-    for name in config_names("worlds"):
-        configs = [model_config(level) for level in world_config(name)["levels"]]
+    for name in config_names("predictors", all_configs):
+        spec = predictor_config(name, all_configs)
+        if spec["kind"] != "cascade":
+            continue
+        configs = [model_config(level, all_configs) for level in spec["levels"]]
         check_stack(configs)
         for cfg in configs:
             assert cfg.window * cfg.cell + 2 * cfg.margin <= run_size(cfg.data_profile), (name, cfg.name)
@@ -69,17 +99,23 @@ def test_config_files_must_list_every_field(roots):
     path.write_text(yaml.safe_dump(values))
     with pytest.raises(ValueError, match="missing fields seed"):
         evaluation_config("smoke_dla", configs)
-    path = configs / "worlds" / "smoke_stack.yaml"
-    path.write_text(yaml.safe_dump({"levels": ["smoke_coarse", "smoke_fine"]}))
+    path = configs / "predictors" / "smoke_cascade.yaml"
+    path.write_text(yaml.safe_dump({"kind": "cascade", "levels": ["smoke_coarse", "smoke_fine"]}))
     with pytest.raises(ValueError, match="missing fields splits, steps"):
-        world_config("smoke_stack", configs)
+        predictor_config("smoke_cascade", configs)
+    path = configs / "predictors" / "smoke_model_chunks.yaml"
+    path.write_text(yaml.safe_dump({"kind": "baseline", "method": "model_chunks", "chunk": 16}))
+    with pytest.raises(ValueError, match="missing fields model, steps"):
+        predictor_config("smoke_model_chunks", configs)
 
 
 @pytest.fixture
 def roots(tmp_path):
-    """Copies of configs/ and empty models and results folders, so tests can edit config files."""
+    """Copies of configs/ and the tests' configs in one folder, and empty models and results folders, so
+    tests can edit config files."""
     configs = tmp_path / "configs"
     shutil.copytree(CONFIGS_DIR, configs)
+    shutil.copytree(CONFIGS, configs, dirs_exist_ok=True)
     return {"configs_root": configs, "models_root": tmp_path / "models", "results_root": tmp_path / "results"}
 
 
@@ -163,10 +199,14 @@ def test_changed_configs_are_refused(dla_root, roots):
 def test_evaluate_checks_the_predictor(dla_root, roots):
     with pytest.raises(RuntimeError, match="not trained"):
         evaluate("smoke_dla", "smoke_dla", data_root=dla_root, **roots)
-    with pytest.raises(ValueError, match="scores models"):
-        evaluate("smoke_dla", "smoke_stack", data_root=dla_root, **roots)  # a world, not a model
-    with pytest.raises(ValueError, match="scores worlds"):
+    with pytest.raises(ValueError, match="does not score a cascade"):
+        evaluate("smoke_dla", "smoke_cascade", data_root=dla_root, **roots)
+    with pytest.raises(ValueError, match="does not score a model"):
         evaluate("smoke_world", "smoke_dla", data_root=dla_root, **roots)
+    with pytest.raises(ValueError, match="does not score a analytical_chunks baseline"):
+        evaluate("smoke_erosion", "smoke_analytical_chunks", data_root=dla_root, **roots)
+    with pytest.raises(KeyError, match="no predictor"):
+        evaluate("smoke_dla", "nope", data_root=dla_root, **roots)
 
 
 def test_missing_fraction():
@@ -179,7 +219,7 @@ def test_missing_fraction():
     np.testing.assert_allclose(missing_fraction(small, large), [0.0, 0.5])
 
 
-def test_a_world_is_built_from_its_file(roots, monkeypatch):
+def test_cascades_and_baselines_are_built_from_their_files(roots, monkeypatch):
     import erosion_sim.world.suite as world_suite
     from erosion_sim.paths import model_dir
 
@@ -187,11 +227,18 @@ def test_a_world_is_built_from_its_file(roots, monkeypatch):
         folder = model_dir(name, roots["models_root"])
         folder.mkdir(parents=True)
         (folder / "done.json").write_text("{}")
-    _edit(roots["configs_root"], "worlds", "smoke_stack", steps=3)
+    _edit(roots["configs_root"], "predictors", "smoke_cascade", steps=3)
     seen = {}
     monkeypatch.setattr(world_suite, "evaluate_world", lambda models, out, **kw: seen.update(models=models, **kw))
-    evaluate("smoke_world", "smoke_stack", **roots)
-    assert set(seen["models"]) == {"smoke_coarse", "smoke_fine", "smoke_erosion"}  # levels and the chunk model
-    assert seen["settings"].worlds == (("smoke_stack", ("smoke_coarse", "smoke_fine"), (("steps", 3), ("splits", (5.0,)))),)
+    evaluate("smoke_world", "smoke_cascade", **roots)
+    assert set(seen["models"]) == {"smoke_coarse", "smoke_fine"} and "baselines" not in seen
+    assert seen["settings"].cascades == (("smoke_cascade", ("smoke_coarse", "smoke_fine"),
+                                          (("steps", 3), ("splits", (5.0,)))),)
     assert seen["settings"].data_profile == "erosion_smoke/smoke"
-    assert seen["record"]["predictor"]["kind"] == "world"
+    assert seen["record"]["predictor"]["kind"] == "cascade"
+
+    seen.clear()
+    evaluate("smoke_world", "smoke_model_chunks", **roots)
+    assert set(seen["models"]) == {"smoke_erosion"} and seen["settings"].cascades == ()
+    assert seen["baselines"] == {"smoke_model_chunks": {"kind": "baseline", "method": "model_chunks",
+                                                        "model": "smoke_erosion", "chunk": 16, "steps": 2}}

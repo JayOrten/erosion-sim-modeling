@@ -1,10 +1,12 @@
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
-from erosion_datagen.config import GROUPS, OOD_RANGES
+from erosion_datagen.config import group_names, load_group
 from erosion_datagen.simulate import (
+    SettingsChanged,
     dataset_dir,
     draw_run,
     fill_pits,
@@ -16,9 +18,17 @@ from erosion_datagen.simulate import (
     run_terrain,
     simulate,
 )
-from erosion_terrain import ErodibilityMap, Terrain, fbm, fractal_noise, map_from_columns
+from erosion_terrain import (
+    ErodibilityMap,
+    Terrain,
+    fbm,
+    fractal_noise,
+    map_from_columns,
+)
 
-CFG = GROUPS["smoke"]
+# The tests' own groups, in the main repo's tests/configs/data/.
+TEST_GROUPS = Path(__file__).resolve().parents[2] / "tests" / "configs" / "data"
+CFG = load_group("erosion_smoke/smoke", TEST_GROUPS)
 
 
 def _smoke_run(**overrides):
@@ -37,7 +47,7 @@ def test_draws_are_per_run_and_deterministic():
 
 
 def test_main_group_draws_follow_the_plan():
-    group = GROUPS["main_256"]
+    group = load_group("erosion_master/main_256")
     cols = plan_split(replace(group, train_runs=3_000), "train")
     n = len(cols["index"])
     assert set(cols["group"]) == {"main_256"} and set(cols["split"]) == {"train"}
@@ -62,13 +72,13 @@ def test_main_group_draws_follow_the_plan():
 
 
 def test_scaled_bands_and_test_only_groups():
-    assert GROUPS["main_2048"].period == (128.0, 256.0) and GROUPS["main_2048"].band_width == (32.0, 256.0)
-    assert GROUPS["main_1024"].snapshots == 11 and GROUPS["long_256"].snapshots == 31
-    assert GROUPS["ood_256"].splits == ("test",)
-    cols = plan_split(GROUPS["ood_256"], "test")
+    assert load_group("erosion_master/main_2048").period == (128.0, 256.0) and load_group("erosion_master/main_2048").band_width == (32.0, 256.0)
+    assert load_group("erosion_master/main_1024").snapshots == 11 and load_group("erosion_master/long_256").snapshots == 31
+    assert load_group("erosion_master/ood_256").splits == ("test",)
+    cols = plan_split(load_group("erosion_master/ood_256"), "test")
     assert set(cols["noise"]) == {"perlin"} and set(cols["fractal"]) == {"fbm"} and set(cols["warp"]) == {0.0}
     assert set(cols["map_shape"]) == {"uniform"}
-    for i, (param, (low, high)) in enumerate(OOD_RANGES):
+    for i, (param, (low, high)) in enumerate(load_group("erosion_master/ood_256").ood_ranges):
         rows = cols["index"] % 3 == i
         assert set(cols["ood_param"][rows]) == {param}
         values = cols["D"][rows] / cols["K_ref"][rows] if param == "D_over_K" else cols[param][rows]
@@ -173,19 +183,34 @@ def test_make_dataset_resumes_after_an_interruption(tmp_path):
     assert not (tmp_path / "parts" / "progress.json").exists()
 
 
-def test_make_dataset_starts_over_with_new_settings(tmp_path):
+def test_make_dataset_refuses_new_settings(tmp_path):
     def stop(done, total):
         if done == 1:
             raise RuntimeError
 
     try:
-        make_dataset(CFG, "val", tmp_path, progress=stop)
+        make_dataset(CFG, "val", tmp_path / "a", progress=stop)
     except RuntimeError:
         pass
+    with pytest.raises(SettingsChanged, match="started"):  # an interrupted split
+        make_dataset(replace(CFG, steps=10), "val", tmp_path / "a")
+    make_dataset(CFG, "val", tmp_path / "b")
     seen = []
-    make_dataset(replace(CFG, steps=10), "val", tmp_path, progress=lambda done, total: seen.append(done))
-    assert seen[0] == 0
-    assert load_dataset(tmp_path)[0].shape[1] == 10 // CFG.snapshot_every + 1
+    make_dataset(CFG, "val", tmp_path / "b", progress=lambda done, total: seen.append(done))
+    assert seen == []  # a finished split is left as it is
+    with pytest.raises(SettingsChanged, match="made"):
+        make_dataset(replace(CFG, steps=10), "val", tmp_path / "b")
+
+
+def test_every_group_file_loads():
+    assert "erosion_master/main_256" in group_names()
+    assert group_names(TEST_GROUPS) == ["erosion_smoke/smoke", "erosion_smoke/smoke_ood"]
+    for root in (None, TEST_GROUPS):
+        for name in group_names(root):
+            group = load_group(name, root)
+            assert group.profile == name and group.snapshots > 1
+    with pytest.raises(KeyError):
+        load_group("main_256")  # the dataset is part of the name
 
 
 def test_make_chunked_matches_chunks_simulated_alone(tmp_path):

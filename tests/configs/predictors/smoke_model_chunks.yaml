@@ -1,0 +1,6 @@
+# Smoke: smoke_erosion on closed 16² chunks, at 2 sampler steps.
+kind: baseline
+method: model_chunks
+model: smoke_erosion
+chunk: 16
+steps: 2

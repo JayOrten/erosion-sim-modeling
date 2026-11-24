@@ -1,0 +1,4 @@
+# The simulator on closed 256² chunks, stitched. Needs `erosion-datagen chunked <group> test --chunk 256`.
+kind: baseline
+method: simulator_chunks
+chunk: 256

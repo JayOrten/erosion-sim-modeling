@@ -1,0 +1,5 @@
+# Band 2, two levels: 4 m and 1 m.
+kind: cascade
+levels: [band2_two_4m, band2_two_1m]
+steps: 32
+splits: [5.0]

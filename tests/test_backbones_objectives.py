@@ -2,6 +2,7 @@ from dataclasses import replace
 
 import pytest
 import torch
+from conftest import CONFIGS
 
 from erosion_sim.config import model_config
 from erosion_sim.models import build_backbone
@@ -93,7 +94,7 @@ def test_generate_and_network_calls_follow_the_objective():
 @pytest.mark.parametrize("objective", ["regression", "edm", "flow_matching"])
 @pytest.mark.parametrize("task", ["erosion", "dla"])
 def test_every_task_backbone_and_objective_trains_and_loads(task, backbone, objective, data_root, dla_root, tmp_path):
-    base = model_config("smoke_dla" if task == "dla" else "smoke")
+    base = model_config("smoke_dla" if task == "dla" else "smoke", CONFIGS)
     cfg = replace(base, objective=objective, **SMALL[backbone])
     history = train(cfg, data_root=dla_root if task == "dla" else data_root, out=tmp_path / "m")
     assert all(torch.isfinite(torch.tensor(history["train_loss"] + history["val_loss"])))
@@ -119,8 +120,8 @@ def test_fno_is_shift_equivariant():
 def test_residual_model_adds_a_sample_to_the_regression(data_root, tmp_path):
     from erosion_sim.objectives.residual import ResidualModel
 
-    base = train(model_config("smoke"), data_root=data_root, out=tmp_path / "base")["folder"]
-    cfg = replace(model_config("smoke"), objective="edm", residual_of=str(base))
+    base = train(model_config("smoke", CONFIGS), data_root=data_root, out=tmp_path / "base")["folder"]
+    cfg = replace(model_config("smoke", CONFIGS), objective="edm", residual_of=str(base))
     train(cfg, data_root=data_root, out=tmp_path / "residual")
     model, scaling, loaded, ckpt = load_checkpoint(tmp_path / "residual", device="cpu")
     regression, regression_scaling, _, _ = load_checkpoint(base, device="cpu")
@@ -131,16 +132,16 @@ def test_residual_model_adds_a_sample_to_the_regression(data_root, tmp_path):
     expected = regression(x, cond) + generate(model.inner, x, cond, noise, 2)
     torch.testing.assert_close(generate(model, x, cond, noise, 2), expected.detach())
     with pytest.raises(ValueError):
-        replace(model_config("smoke"), residual_of=str(base))  # a regression residual model
+        replace(model_config("smoke", CONFIGS), residual_of=str(base))  # a regression residual model
 
 
 def test_consistency_student_starts_from_the_teacher_and_samples_in_few_calls(data_root, tmp_path):
     from erosion_sim.objectives import consistency
 
-    teacher = train(replace(model_config("smoke"), objective="edm"), data_root=data_root, out=tmp_path / "teacher")["folder"]
-    cfg = replace(model_config("smoke"), objective="consistency", teacher=str(teacher), steps=0)
+    teacher = train(replace(model_config("smoke", CONFIGS), objective="edm"), data_root=data_root, out=tmp_path / "teacher")["folder"]
+    cfg = replace(model_config("smoke", CONFIGS), objective="consistency", teacher=str(teacher), steps=0)
     with pytest.raises(ValueError):
-        replace(model_config("smoke"), objective="consistency")
+        replace(model_config("smoke", CONFIGS), objective="consistency")
     train(cfg, data_root=data_root, out=tmp_path / "student0", steps=1, eval_every=1, lr=0.0, warmup_steps=0)
     student, scaling, _, ckpt = load_checkpoint(tmp_path / "student0", device="cpu")
     edm, edm_scaling, _, _ = load_checkpoint(teacher, device="cpu")

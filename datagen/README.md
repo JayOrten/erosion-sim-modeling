@@ -17,15 +17,18 @@ uv sync
 
 ```sh
 uv run erosion-datagen list                      # every group: grid, runs per split, snapshots, disk
-uv run erosion-datagen generate main_256         # every split of a group; resumes, skips finished splits
-uv run erosion-datagen chunked main_512 test --chunk 256   # the runs again as closed chunks (C8)
+uv run erosion-datagen generate erosion_master/main_256         # every split; resumes, skips finished splits
+uv run erosion-datagen chunked erosion_master/main_512 test --chunk 256   # the runs again as closed chunks (C8)
 ```
 
-On the cluster, `sbatch slurm/datagen.sbatch <group> [split ...]` from the repo root runs `generate` on
-one CPU node, with a process per core.
+On the cluster, `sbatch slurm/datagen.sbatch <dataset>/<group> [split ...]` from the repo root runs
+`generate` on one CPU node, with a process per core of the job (`--processes` overrides).
 
-Groups are in `src/erosion_datagen/config.py` (``GROUPS``), following the experiments plan's "Erosion
-data" section: `main_256` to `main_2048` (one per scale band), `ood_*`, `long_*`, and two `smoke` groups.
+Each group is a file `../configs/data/<dataset>/<group>.yaml` with `generator: erosion` and every field of
+`Group` (`src/erosion_datagen/config.py`); its name is that path, such as `erosion_master/main_256`. They
+follow the experiments plan's "Erosion data" section: `main_256` to `main_2048` (one per scale band),
+`ood_*`, `long_*`, and two `smoke` groups in `erosion_smoke`. A group file is not edited once it has data:
+`generate` refuses if a split on disk was made or started with other settings.
 Every column of a run is drawn independently from the run's own random stream, seeded by SHA-256 of
 (dataset, group, split, index), so a run does not change if its split grows. `real_dem` groups are
 deferred (they need elevation tiles downloaded first).
@@ -42,8 +45,7 @@ columns. `meta.json` holds the group settings and the snapshot `times`, and is w
 project opens a split with `erosion_sim.data.splits.Split.open("erosion_master/main_256", "train")`.
 
 `measure.py` has the measurements behind the group settings (feature size, edge reach, speed;
-`../docs/notes/datagen-measurements.md`). `timing.py` times the simulator; the main package runs it as a
-separate process to compare the simulator's speed with the models'. `render.py` makes 3D renders.
+`../docs/notes/datagen-measurements.md`).
 
 ## Tests
 

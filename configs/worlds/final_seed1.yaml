@@ -1,4 +1,0 @@
-# The final world, seed 1.
-levels: [final_coarse_seed1, final_fine_seed1]
-steps: 32
-splits: [5.0]

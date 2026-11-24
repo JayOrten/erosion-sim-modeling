@@ -1,12 +1,13 @@
 import numpy as np
 import pytest
+from conftest import CONFIGS
 
 from erosion_sim.data.normalization import dla_conditioning
-from erosion_sim.dla.config import PROFILES
+from erosion_sim.dla.config import data_config
 from erosion_sim.dla.data import NO_START, DLAPairs, DLASplit, make_split, plan_split
 from erosion_sim.dla.simulate import EMPTY, OutgrewGrid, occupancy, simulate
 
-CFG = PROFILES["dla_smoke"]
+CFG = data_config("dla_smoke", CONFIGS)
 
 
 def _connected(mask: np.ndarray) -> bool:
@@ -69,7 +70,7 @@ def test_plan_split_follows_the_config():
 
 
 def test_make_split_round_trips_and_shares_starts(tmp_path):
-    data = DLASplit(make_split(CFG, "test", tmp_path / "test"))
+    data = DLASplit(make_split(CFG, "test", tmp_path / "test", processes=1))
     assert data.arrivals.shape == (CFG.runs("test"), CFG.size, CFG.size)
     assert np.all((data.arrivals != EMPTY).sum(axis=(1, 2)) == CFG.particles)
     for s in range(len(CFG.start_p)):
@@ -83,8 +84,8 @@ def test_make_split_round_trips_and_shares_starts(tmp_path):
 
 
 def test_pairs(tmp_path):
-    data = DLASplit(make_split(CFG, "train", tmp_path / "train"))
-    pairs = DLAPairs(data, runs=data.select(index=(0, 4)), repeats=50, seed=0)
+    data = DLASplit(make_split(CFG, "train", tmp_path / "train", processes=1))
+    pairs = DLAPairs(data, (1, 54), runs=data.select(index={"range": [0, 4]}), repeats=50, seed=0)
     assert len(pairs) == 200
     seen = set()
     for i in range(0, len(pairs), 7):

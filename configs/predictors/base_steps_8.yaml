@@ -1,0 +1,5 @@
+# The base cascade at 8 sampler steps.
+kind: cascade
+levels: [coarse, fine]
+steps: 8
+splits: [5.0]

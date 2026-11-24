@@ -4,7 +4,7 @@ from pathlib import Path
 
 import torch
 
-from ..config import Config, config_from_dict
+from ..config import Config
 from ..data.normalization import Scaling
 from ..models import build_backbone
 from ..objectives import consistency, flow
@@ -40,7 +40,7 @@ def load_checkpoint(path: Path, device: str | None = None, models_root: Path | N
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     path = Path(path)
     ckpt = torch.load(path / "best.pt" if path.is_dir() else path, map_location=device, weights_only=False)
-    cfg = config_from_dict(ckpt["config"])
+    cfg = Config(**ckpt["config"])
     scaling = Scaling.from_dict(ckpt["scaling"]) if ckpt.get("scaling") is not None else None
     model = build_model(cfg, ckpt["sigma_data"]).to(device)
     model.load_state_dict(ckpt["model"])

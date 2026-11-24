@@ -1,0 +1,29 @@
+# Test only: as ood_256, on 512² runs.
+generator: erosion
+size: 512
+train_runs: 0
+val_runs: 0
+test_runs: 200
+steps: 500
+snapshot_every: 25
+dt: 100.0
+cell_size: 1.0
+period: [32.0, 64.0]
+height: [32.0, 128.0]
+octaves: [4, 7]
+persistence: [0.35, 0.65]
+lacunarity: [1.8, 2.4]
+noise_types: [perlin]
+fractal_types: [fbm]
+warp_fraction: 0.0
+warp: [0.1, 0.5]
+K_ref: [0.0001, 0.0005]
+D_over_K: [0.3, 3.0]
+m: [0.3, 0.6]
+m_ref: 0.4
+A_ref: 30.0
+maps: [[uniform, 1.0]]
+map_contrast: [1.0, 10.0]
+map_period: [32.0, 128.0]
+band_width: [8.0, 64.0]
+ood_ranges: [[K_ref, [0.0005, 0.001]], [D_over_K, [3.0, 6.0]], [m, [0.6, 0.7]]]

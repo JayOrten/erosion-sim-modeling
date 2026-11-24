@@ -1,4 +1,0 @@
-# The base world with the fine level trained with coarse-input noise 0.2.
-levels: [coarse, fine_context_noise_02]
-steps: 32
-splits: [5.0]

@@ -1,0 +1,3 @@
+# The analytical stream power solution (erosion/baselines.py) on the whole region.
+kind: baseline
+method: analytical

@@ -3,9 +3,15 @@
 import json
 from pathlib import Path
 
-from ..config import Config, config_from_json, model_config, training_differences
+from ..config import (
+    Config,
+    check_data_profile,
+    config_from_json,
+    model_config,
+    training_differences,
+)
+from ..logs import logged
 from ..paths import is_finished, model_dir
-from ..records import logged
 
 
 class ConfigChanged(RuntimeError):
@@ -41,6 +47,7 @@ def train_model(name: str, data_root: Path | None = None, models_root: Path | No
     from .train import train
 
     cfg = model_config(name, configs_root)
+    check_data_profile(cfg.data_profile, configs_root)
     folder = model_dir(name, models_root)
     check_stored_config(folder, cfg)
     if is_finished(folder):

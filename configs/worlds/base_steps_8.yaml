@@ -1,4 +1,0 @@
-# The base world at 8 sampler steps.
-levels: [coarse, fine]
-steps: 8
-splits: [5.0]

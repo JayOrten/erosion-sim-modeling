@@ -1,0 +1,5 @@
+# Band 3, four levels: 64 m, 16 m, 4 m, 1 m.
+kind: cascade
+levels: [band3_four_64m, band3_four_16m, band3_four_4m, band3_four_1m]
+steps: 32
+splits: [5.0]

@@ -26,7 +26,7 @@ from landlab import RasterModelGrid
 from landlab.components import FastscapeEroder, FlowAccumulator, LinearDiffuser
 from landlab.utils.suppress_output import suppress_output
 
-from .config import ARTIFACTS_DIR, OOD_RANGES, Group
+from .config import ARTIFACTS_DIR, Group
 
 
 def code_version() -> dict:
@@ -86,8 +86,8 @@ def draw_run(group: Group, split: str, index: int) -> dict:
     }
     ranges = {"K_ref": group.K_ref, "D_over_K": group.D_over_K}
     m_range, ood_param = group.m, ""
-    if group.ood:
-        ood_param, out_of_range = OOD_RANGES[index % len(OOD_RANGES)]
+    if group.ood_ranges:
+        ood_param, out_of_range = group.ood_ranges[index % len(group.ood_ranges)]
         if ood_param == "m":
             m_range = out_of_range
         else:
@@ -217,14 +217,24 @@ def _run_one(task: tuple[Group, int, dict]) -> tuple[int, np.ndarray]:
     return index, snapshots
 
 
-def run_many(group: Group, columns: dict[str, np.ndarray], indices=None):
-    """Simulate one run per row of ``columns`` (a run table from ``plan_split``) in parallel. Yield
-    ``(index, snapshots)`` as runs finish. ``indices`` limits the runs to those; None runs all."""
+class SettingsChanged(RuntimeError):
+    """A split on disk was made, or started, with settings its group file no longer gives."""
+
+
+def cores() -> int:
+    """The cores this process may use: on a Slurm node, the job's cores, not the whole node's."""
+    return len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
+
+
+def run_many(group: Group, columns: dict[str, np.ndarray], indices=None, processes: int | None = None):
+    """Simulate one run per row of ``columns`` (a run table from ``plan_split``) in parallel, on
+    ``processes`` processes (default ``cores()``). Yield ``(index, snapshots)`` as runs finish.
+    ``indices`` limits the runs to those; None runs all."""
     indices = range(len(columns["index"])) if indices is None else list(indices)
     tasks = [(group, i, {k: v[i] for k, v in columns.items()}) for i in indices]
     if not tasks:
         return
-    processes = min(group.processes or os.cpu_count() or 1, len(tasks))
+    processes = min(processes or cores(), len(tasks))
     # Spawned workers start fresh, so they see OMP_NUM_THREADS before Landlab loads.
     with multiprocessing.get_context("spawn").Pool(processes) as pool:
         yield from pool.imap_unordered(_run_one, tasks)
@@ -241,6 +251,7 @@ def make_dataset(
     out_dir: Path | None = None,
     progress_every: int = 0,
     progress: Callable[[int, int], None] | None = None,
+    processes: int | None = None,
 ) -> Path:
     """Simulate every run of one (group, split) and write it to ``out_dir`` (default ``dataset_dir``).
     Return ``out_dir``.
@@ -260,7 +271,11 @@ def make_dataset(
     Resumable: while it runs, ``progress.json`` holds the settings and the runs already on disk (each
     added only after its snapshots are flushed). Called again after an interruption, with the same
     settings, it simulates only the missing runs. Runs are a fixed function of the settings and the run
-    index, so the result is the same as an uninterrupted run. With different settings, it starts over.
+    index, so the result is the same as an uninterrupted run. A finished split with the same settings is
+    left as it is. If the settings differ from a finished or interrupted split's, it raises
+    ``SettingsChanged``: put the change in a new group file, or delete the folder.
+
+    ``processes`` defaults to ``cores()``.
 
     ``progress(done, total)`` is called after each run is saved, and ``progress_every`` > 0 prints a line
     every that many runs.
@@ -276,16 +291,19 @@ def make_dataset(
     settings = json.loads(
         json.dumps({"config": vars(group), "split": split, "shape": shape})
     )
+    if (out_dir / "meta.json").exists():
+        if json.loads((out_dir / "meta.json").read_text())["config"] != settings["config"]:
+            raise SettingsChanged(f"{out_dir} was made with other settings than configs/data/{group.profile}.yaml "
+                                  "gives. Undo the edit and use a new group file, or delete the folder.")
+        print(f"{out_dir} is finished; skipping", flush=True)
+        return out_dir
     done: list[int] = []
     if path.exists() and record.exists():
         saved = json.loads(record.read_text())
-        if saved["settings"] == settings:
-            done = saved["done"]
-        else:
-            print(
-                f"{split}: settings differ from the interrupted run; starting over",
-                flush=True,
-            )
+        if saved["settings"] != settings:
+            raise SettingsChanged(f"{out_dir} was started with other settings than configs/data/{group.profile}.yaml "
+                                  "gives. Undo the edit and use a new group file, or delete the folder.")
+        done = saved["done"]
     if done:
         snapshots = np.lib.format.open_memmap(path, mode="r+")
         print(f"{split}: resuming, {len(done)}/{n} runs already on disk", flush=True)
@@ -308,7 +326,7 @@ def make_dataset(
     if progress:
         progress(len(done), n)
     for index, result in run_many(
-        group, columns, [i for i in range(n) if i not in finished]
+        group, columns, [i for i in range(n) if i not in finished], processes
     ):
         snapshots[index] = result
         snapshots.flush()
@@ -353,7 +371,8 @@ def _run_chunk(task: tuple[Group, int, dict, int, int, int]) -> tuple[int, int, 
     return index, y0, x0, snapshots
 
 
-def make_chunked(group: Group, split: str, chunk: int, out_dir: Path | None = None, progress_every: int = 0) -> Path:
+def make_chunked(group: Group, split: str, chunk: int, out_dir: Path | None = None, progress_every: int = 0,
+                 processes: int | None = None) -> Path:
     """Simulate every run of an existing split again as separate closed ``chunk``² pieces, stitched: the
     "independent chunks" baseline of experiment C8. Each chunk's fixed edges are outlets the run does not
     have. Writes ``chunked_<chunk>.npy`` next to the split's ``snapshots.npy``, with the same shape."""
@@ -368,7 +387,7 @@ def make_chunked(group: Group, split: str, chunk: int, out_dir: Path | None = No
     out = np.lib.format.open_memmap(tmp, mode="w+", dtype=np.float32, shape=(n, group.snapshots, group.size, group.size))
     tasks = [(group, i, {k: v[i] for k, v in columns.items()}, y, x, chunk)
              for i in range(n) for y in range(0, group.size, chunk) for x in range(0, group.size, chunk)]
-    processes = min(group.processes or os.cpu_count() or 1, len(tasks))
+    processes = min(processes or cores(), len(tasks))
     with multiprocessing.get_context("spawn").Pool(processes) as pool:
         for done, (i, y, x, snaps) in enumerate(pool.imap_unordered(_run_chunk, tasks), start=1):
             out[i, :, y:y + chunk, x:x + chunk] = snaps

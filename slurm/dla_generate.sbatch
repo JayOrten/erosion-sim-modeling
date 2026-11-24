@@ -1,8 +1,8 @@
 #!/bin/bash
 # Simulate a DLA dataset profile on one CPU node. Submit from the repo root:
-#   sbatch slurm/dla_generate.sbatch <profile> [split ...]
-# Profiles: erosion_sim.dla.config.PROFILES (dla_master). No splits means train, val, and test.
-# Writes artifacts/data/<profile>/<split>/. One process per core of the job.
+#   sbatch slurm/dla_generate.sbatch <dataset> [split ...]      e.g. dla_master
+# Datasets are the files in configs/data/ with generator: dla. No splits means train, val, and test.
+# Writes artifacts/data/<dataset>/<split>/; finished splits are skipped. One process per core of the job.
 #SBATCH --job-name=dla_generate
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=32G
