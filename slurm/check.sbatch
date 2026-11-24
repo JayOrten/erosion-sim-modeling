@@ -2,8 +2,15 @@
 # Check that the environments run on a GPU compute node with no internet access.
 # Submit from the repo root: sbatch slurm/check.sbatch
 #SBATCH --job-name=check
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --gpus=1
+# QOS dw87 (dw partition, A100s) by default; override with `SBATCH_QOS=cs` (cs, cs2, cs3) or `SBATCH_QOS=gpu`.
+#SBATCH --qos=dw87
+# torch cu130 wheels need compute capability >= 7.5 and x86: this excludes P100 (pascal) and GH200 (ARM).
+# Node tags: zen3 = dw/cs A100, sapphirerapids = cs2 H100, graniterapids = cs3 B200, hopper = H200, lovelace = L40S.
+#SBATCH --constraint=zen3|sapphirerapids|graniterapids|hopper|lovelace
 #SBATCH --mem=32G
 #SBATCH --time=00:30:00
 #SBATCH --output=logs/%x-%j.out
