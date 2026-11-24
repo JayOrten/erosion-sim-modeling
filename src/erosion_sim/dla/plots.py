@@ -48,13 +48,14 @@ def plot_metric(results: Results, metric: str, show: bool = True):
     return fig
 
 
-def plot_examples(results: Results, conditions: list[str] | None = None, count: int = 3, show: bool = True):
+def plot_examples(results: Results, conditions: list[str] | None = None, count: int = 3, panel: float = 3.0,
+                  show: bool = True):
     """For each condition (default: every fixed-``p`` one): the start, then ``count`` simulator clusters,
-    then ``count`` clusters from each model."""
+    then ``count`` clusters from each model. ``panel`` is each image's width in inches."""
     conds = conditions or [c for c in results.manifest["conditions"] if c.startswith("p=")]
     sources = ["simulator", *models(results)]
     cols = 1 + count * len(sources)
-    fig, axes = plt.subplots(len(conds), cols, figsize=(1.3 * cols, 1.4 * len(conds)), squeeze=False,
+    fig, axes = plt.subplots(len(conds), cols, figsize=(panel * cols, (panel + 0.1) * len(conds)), squeeze=False,
                              layout="constrained")
     for r, cond in enumerate(conds):
         panels = [("start", results.examples[f"start/{cond}"])]
@@ -68,8 +69,8 @@ def plot_examples(results: Results, conditions: list[str] | None = None, count: 
                 name, image = panels[c]
                 ax.imshow(image, cmap="gray_r", interpolation="nearest")
                 if r == 0:
-                    ax.set_title(name, fontsize=8)
-        axes[r, 0].set_ylabel(cond, fontsize=8)
+                    ax.set_title(name, fontsize=11)
+        axes[r, 0].set_ylabel(cond, fontsize=11)
     if show:
         plt.show()
     return fig
