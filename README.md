@@ -38,7 +38,7 @@ configs/
   evaluations/<name>.yaml  one evaluation: suite, test dataset, and every suite setting
   worlds/<name>.yaml     one world: its levels' models, coarsest first, and its sampler's steps and splits
 notebooks/experiments/   one notebook per experiment: the commands it needs, then its analysis
-slurm/                   batch scripts: check, train, evaluate, datagen
+slurm/                   batch scripts: check, train, evaluate, datagen, dla_generate
 docs/plans/, docs/notes/ plans, and measurements and findings
 archive/                 notebooks and configs of past runs, kept for reference; not run or tested
 tests/                   uv run pytest
@@ -99,8 +99,8 @@ uv run erosion-sim list                              # every model, world, and e
 
 Data:
 
-- DLA: `uv run erosion-sim dla-generate dla_master` locally (a few minutes), then copy
-  `artifacts/data/dla_master/` to the cluster.
+- DLA: `sbatch slurm/dla_generate.sbatch dla_master` on the cluster, or
+  `uv run erosion-sim dla-generate dla_master` locally (a few minutes).
 - Erosion: `erosion-datagen list` shows the groups. `sbatch slurm/datagen.sbatch <group>` generates one;
   submit it again if it hits the time limit, and it resumes. `erosion-datagen chunked main_512 test --chunk 256`
   adds the simulator-in-chunks baseline that `world_baselines` needs.

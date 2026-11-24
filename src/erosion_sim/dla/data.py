@@ -91,7 +91,9 @@ def make_split(cfg: DataConfig, split: str, out_dir: Path | None = None, progres
               None if columns["start_id"][i] == NO_START else starts[columns["start_id"][i]])
              for i in range(len(columns["index"]))]
     arrivals = np.empty((len(tasks), cfg.size, cfg.size), dtype=np.int16)
-    processes = min(cfg.processes or os.cpu_count() or 1, len(tasks))
+    # The cores this process may use: on a Slurm node, the job's cores, not the whole node's.
+    cores = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
+    processes = min(cfg.processes or cores or 1, len(tasks))
     start = time.perf_counter()
     for done, (i, arrival) in enumerate(_simulate_all(tasks, processes), start=1):
         arrivals[i] = arrival

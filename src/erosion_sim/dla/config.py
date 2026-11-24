@@ -26,7 +26,7 @@ class DataConfig:
     start_p: tuple[float, ...] = (0.1,) * 10 + (1.0,) * 10  # one entry per shared start
     start_particles: int = 200
     runs_per_start: int = 50
-    processes: int | None = None  # None uses every core
+    processes: int | None = None  # None uses every core the process may use
 
     def runs(self, split: str) -> int:
         if split == "test":
