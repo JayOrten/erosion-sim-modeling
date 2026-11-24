@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LightSource
 
-from ..experiments.results import Results
+from ..evaluation.results import Results
 
 TABLE = ("rmse", "skill", "median_skill", "erosion_ratio", "iou", "iou_1", "log_area_rmse", "pits_per_km2",
          "slope_area_error", "fine_detail")

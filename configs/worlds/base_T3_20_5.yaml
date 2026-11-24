@@ -1,0 +1,4 @@
+# The base world with two blend phases split at 20 and 5.
+levels: [coarse, fine]
+steps: 32
+splits: [20.0, 5.0]

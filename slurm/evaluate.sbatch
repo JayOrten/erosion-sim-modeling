@@ -1,8 +1,7 @@
 #!/bin/bash
-# Run one experiment's evaluation suite on one GPU. Submit from the repo root:
-#   erosion-sim submit <experiment>      (submits every job an experiment needs), or by hand:
-#   sbatch slurm/evaluate.sbatch <experiment>
-# Results go to artifacts/results/<experiment>/
+# Score one model or world under one evaluation, on one GPU. Submit from the repo root:
+#   sbatch slurm/evaluate.sbatch <evaluation> <predictor> [--force]
+# Results go to artifacts/results/<evaluation>/<predictor>/, with everything it prints in evaluate.log.
 #SBATCH --job-name=evaluate
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8

@@ -1,0 +1,18 @@
+# erosion_test with 8 pairs per run, for finer breakdowns by parameter and elapsed time.
+suite: erosion
+data_profile: erosion_master/main_256
+split: test
+data: []
+runs: null
+pairs_per_run: 8
+ends_yr: null
+samples: 2
+steps: 32
+step_sweep: null
+baselines: [analytical]
+fill_pits: false
+chains: []
+batch_size: 32
+examples: 3
+seed: 0
+bf16: true

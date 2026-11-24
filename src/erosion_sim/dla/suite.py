@@ -1,5 +1,5 @@
 """The DLA evaluation suite: every DLA metric for some models on the test split, written as a results
-folder (``experiments/results.py``).
+folder (``evaluation/results.py``).
 
 Test conditions, from the test split's run table (``dla/data.py``):
 
@@ -14,7 +14,7 @@ and for the simulator's runs, and summarized with ``metrics.compare``.
 Results layout:
 
 Each scored (model, sampler steps) pair is an entry. Without a step sweep an entry is named by the model's
-label; with one (``Settings.step_sweep``, experiment A4) it is ``<label>@<steps>``. The manifest's
+name; with one (``Settings.step_sweep``) it is ``<name>@<steps>``. The manifest's
 ``entries`` lists each entry's model, steps, and network calls per sample.
 
 - scalars: ``[entry][condition][metric]`` -> ``compare`` dict, plus ``[entry]["seconds_per_sample"]``.
@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..experiments.results import model_records, write_results
+from ..evaluation.results import model_records, write_results
 from ..objectives.edm import DEFAULT_STEPS
 from ..objectives.sampling import network_calls
 from ..training.checkpoints import load_checkpoint
@@ -47,8 +47,8 @@ class Settings:
     seed: int = 0  # noise keys are (seed, condition, sample index), the same for every model
     examples: int = 4  # clusters kept per condition for figures
     bf16: bool = True
-    only: str | None = None  # score only conditions whose name starts with this, e.g. "p=" for A5
-    step_sweep: tuple[int, ...] | None = None  # score every model at each of these step counts (A4)
+    only: str | None = None  # score only conditions whose name starts with this, e.g. "p="
+    step_sweep: tuple[int, ...] | None = None  # score every model at each of these step counts
 
 
 @dataclass(frozen=True)
@@ -73,8 +73,8 @@ def conditions(test: DLASplit) -> list[Condition]:
 
 
 def evaluate_dla(models: dict[str, Path], out: Path, data_profile: str | None = None, data_root: Path | None = None,
-                 settings: Settings = Settings(), device: str | None = None) -> Path:
-    """Score each model (label -> model folder) on every test condition and write the results to ``out``.
+                 settings: Settings = Settings(), device: str | None = None, record: dict | None = None) -> Path:
+    """Score each model (name -> model folder) on every test condition and write the results to ``out``.
 
     The test split is ``data_profile``'s (default: the first model's training dataset). ``data_root``
     overrides where it is read from, as in training.
@@ -133,7 +133,7 @@ def evaluate_dla(models: dict[str, Path], out: Path, data_profile: str | None = 
         "conditions": [c.name for c in conds],
         "settings": asdict(settings),
     }
-    return write_results(out, scalars, arrays, examples, manifest)
+    return write_results(out, scalars, arrays, examples, {**manifest, **(record or {})})
 
 
 @dataclass(frozen=True)
@@ -159,8 +159,8 @@ def missing_fraction(small: np.ndarray, large: np.ndarray) -> np.ndarray:
 
 def evaluate_agreement(models: dict[str, Path], out: Path, data_profile: str | None = None,
                        data_root: Path | None = None, settings: AgreementSettings = AgreementSettings(),
-                       device: str | None = None) -> Path:
-    """Agreement across steps (experiment A6), written as a results folder.
+                       device: str | None = None, record: dict | None = None) -> Path:
+    """Agreement across steps, written as a results folder.
 
     - Containment: from each start, samples at every jump size share one noise key. For every pair of
       jumps ``x1 < x2``, the fraction of the ``x1`` sample's cells missing from the ``x2`` sample. Starts:
@@ -235,4 +235,4 @@ def evaluate_agreement(models: dict[str, Path], out: Path, data_profile: str | N
         "jumps": jumps,
         "settings": asdict(settings),
     }
-    return write_results(out, scalars, arrays, examples, manifest)
+    return write_results(out, scalars, arrays, examples, {**manifest, **(record or {})})

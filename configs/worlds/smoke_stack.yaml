@@ -1,0 +1,4 @@
+# A smoke world.
+levels: [smoke_coarse, smoke_fine]
+steps: 32
+splits: [5.0]

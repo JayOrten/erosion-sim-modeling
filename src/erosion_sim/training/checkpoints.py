@@ -10,7 +10,7 @@ from ..models import build_backbone
 from ..objectives import consistency, flow
 from ..objectives.edm import Denoiser
 from ..objectives.residual import ResidualModel
-from ..paths import model_path
+from ..paths import model_dir
 
 
 def build_model(cfg: Config, sigma_data: float = 1.0) -> torch.nn.Module:
@@ -46,6 +46,6 @@ def load_checkpoint(path: Path, device: str | None = None, models_root: Path | N
     model.load_state_dict(ckpt["model"])
     model.eval()
     if cfg.residual_of:
-        base = load_checkpoint(model_path(cfg.residual_of, models_root), device)[0]
+        base = load_checkpoint(model_dir(cfg.residual_of, models_root), device)[0]
         model = ResidualModel(base, model).eval()
     return model, scaling, cfg, ckpt

@@ -1,11 +1,19 @@
-"""Training settings: one frozen ``Config`` per model, plus a few named profiles.
+"""Training settings: one frozen ``Config`` per model, read from ``configs/models/<name>.yaml``.
 
-A trained model's folder holds its config as ``config.json`` (``config_to_json``), so the settings it was
-trained with can always be read back (``config_from_json``).
+A model file lists every field below except ``name``, which is the file name: each file is the complete
+record of its model, and does not depend on the defaults here. The defaults fill fields missing from
+``config.json`` files saved before a field was added.
+A trained model's folder holds its full config as ``config.json`` (``config_to_json``), so the settings it
+was trained with can always be read back (``config_from_json``).
 """
 
 import json
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import asdict, dataclass, fields
+from pathlib import Path
+
+import yaml
+
+from .paths import CONFIGS_DIR
 
 TASKS = ("erosion", "dla")
 BACKBONES = ("unet", "dit", "fno")
@@ -15,10 +23,9 @@ DLA_CONDITIONING = ("p", "x")  # normalization.dla_conditioning
 
 @dataclass(frozen=True)
 class Config:
-    """Settings for one training run. A registered experiment's model is saved in
-    ``artifacts/models/<experiment>/<label>/`` (``paths.model_dir``)."""
+    """Settings for one model, trained into ``artifacts/models/<name>/`` (``paths.model_dir``)."""
 
-    profile: str  # a readable name
+    name: str  # the model's name: its file name in configs/models/
     data_profile: str  # dataset under artifacts/data/, such as "erosion_master/main_256" or "dla_master"
     # "erosion": snapshot pairs from datagen/ (data.ErosionPairs). "dla": cluster pairs (dla.data.DLAPairs).
     task: str = "erosion"
@@ -27,8 +34,7 @@ class Config:
     # (objectives/edm.py). "flow_matching": sample it with a flow matching model (objectives/flow.py).
     # "consistency": a student distilled from the EDM model at `teacher` (objectives/consistency.py).
     objective: str = "regression"
-    # Models this one is built on, as model folders (absolute, or relative to artifacts/models, such as
-    # "B2/regression"). `residual_of`: a regression model whose residual this generative model samples
+    # Models this one is built on, by name, such as "erosion_regression". `residual_of`: a regression model whose residual this generative model samples
     # (residual.py, experiment B8). `teacher`: the EDM model a consistency student is distilled from.
     residual_of: str | None = None
     teacher: str | None = None
@@ -132,87 +138,70 @@ class Config:
         return 1 + len(self.inputs) + (self.context_cell is not None)
 
 
-PROFILES = {
-    # Seconds on CPU, for tests. Point data_root at a small dataset.
-    "smoke": Config(
-        profile="smoke",
-        data_profile="smoke",
-        channels=(8, 16),
-        emb_dim=16,
-        batch_size=4,
-        steps=6,
-        warmup_steps=2,
-        ema_decay=0.5,
-        eval_every=3,
-        val_samples=8,
-        log_every=2,
-        num_workers=0,
-        compile=False,
-    ),
-    # The DLA version, on erosion_sim.dla's dla_smoke dataset.
-    "smoke_dla": Config(
-        profile="smoke_dla",
-        data_profile="dla_smoke",
-        task="dla",
-        objective="edm",
-        fixed_edges=False,
-        repeats=20,
-        channels=(8, 16),
-        emb_dim=16,
-        batch_size=4,
-        steps=6,
-        warmup_steps=2,
-        ema_decay=0.5,
-        eval_every=3,
-        val_samples=8,
-        log_every=2,
-        num_workers=0,
-        compile=False,
-    ),
-}
+def check_fields(path: Path, values: dict, required: set[str]) -> None:
+    """Raise ``ValueError`` unless the config file at ``path`` has exactly the fields ``required``."""
+    missing, unknown = sorted(required - set(values)), sorted(set(values) - required)
+    if missing or unknown:
+        raise ValueError(f"{path}: " + "; ".join(
+            text for text in (f"missing fields {', '.join(missing)}" if missing else "",
+                              f"unknown fields {', '.join(unknown)}" if unknown else "") if text))
 
 
-def get_config(profile: str, objective: str | None = None) -> Config:
-    """The settings for ``profile``, with its objective replaced by ``objective`` if given."""
-    cfg = PROFILES[profile]
-    return cfg if objective is None else replace(cfg, objective=objective)
+def config_names(kind: str, root: Path | None = None) -> list[str]:
+    """Every name defined in ``configs/<kind>/`` (``models``, ``evaluations``, or ``worlds``). ``root``
+    replaces ``configs/``."""
+    return sorted(f.stem for f in ((Path(root) if root is not None else CONFIGS_DIR) / kind).glob("*.yaml"))
+
+
+def model_config(name: str, root: Path | None = None) -> Config:
+    """The config in ``configs/models/<name>.yaml`` (``root`` replaces ``configs/``). The file must list
+    every field but ``name``. Lists become tuples, as in ``config_from_json``."""
+    path = (Path(root) if root is not None else CONFIGS_DIR) / "models" / f"{name}.yaml"
+    if not path.exists():
+        raise KeyError(f"no model {name!r}: {path} does not exist")
+    values = yaml.safe_load(path.read_text()) or {}
+    check_fields(path, values, {f.name for f in fields(Config)} - {"name"})
+    return Config(name=name, **{k: from_json_value(v) for k, v in values.items()})
 
 
 # Fields that do not change the trained weights. A stored config may differ from a requested one in these.
-NOT_TRAINING = frozenset({"profile", "num_workers", "log_every", "compile", "patience"})
+NOT_TRAINING = frozenset({"name", "num_workers", "log_every", "compile", "patience"})
 
 
-def _to_json(value):
+def to_json_value(value):
     if isinstance(value, (set, frozenset)):  # tagged, so a set never reads back as a range tuple
-        return {"one_of": sorted((_to_json(v) for v in value), key=lambda v: json.dumps(v, sort_keys=True))}
+        return {"one_of": sorted((to_json_value(v) for v in value), key=lambda v: json.dumps(v, sort_keys=True))}
     if isinstance(value, (tuple, list)):
-        return [_to_json(v) for v in value]
+        return [to_json_value(v) for v in value]
     return value
 
 
-def _from_json(value):
+def from_json_value(value):
     if isinstance(value, dict) and set(value) == {"one_of"}:
-        return frozenset(_from_json(v) for v in value["one_of"])
+        return frozenset(from_json_value(v) for v in value["one_of"])
     if isinstance(value, list):
-        return tuple(_from_json(v) for v in value)
+        return tuple(from_json_value(v) for v in value)
     return value
 
 
 def config_to_json(cfg: Config) -> dict:
     """``cfg`` as plain JSON values. Tuples become lists; sets become ``{"one_of": [...]}``."""
-    return {k: _to_json(v) for k, v in asdict(cfg).items()}
+    return {k: to_json_value(v) for k, v in asdict(cfg).items()}
 
 
 def config_from_dict(values: dict) -> Config:
     """A ``Config`` from saved fields, as in a checkpoint. Fields missing from ``values`` (added since it was
-    saved) take their defaults; fields no longer in ``Config`` are dropped."""
+    saved) take their defaults; fields no longer in ``Config`` are dropped. Configs saved before models
+    had names have ``profile`` instead of ``name``."""
     known = {f.name for f in fields(Config)}
+    if "name" not in values and "profile" in values:
+        values = {**values, "name": values["profile"]}
     return Config(**{k: v for k, v in values.items() if k in known})
 
 
 def config_from_json(values: dict) -> Config:
     """The inverse of ``config_to_json``, with ``config_from_dict``'s handling of added and removed fields."""
-    return config_from_dict({k: _from_json(v) for k, v in values.items()})
+    return config_from_dict({k: from_json_value(v) for k, v in values.items()})
 
 
 def training_differences(stored: Config, requested: Config) -> list[str]:

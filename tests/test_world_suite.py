@@ -3,8 +3,8 @@ from dataclasses import replace
 import pytest
 from conftest import write_fake_dataset
 
-from erosion_sim.config import get_config
-from erosion_sim.experiments.results import read_results
+from erosion_sim.config import model_config
+from erosion_sim.evaluation.results import read_results
 from erosion_sim.training.train import train
 from erosion_sim.world.suite import Settings, evaluate_world
 
@@ -14,11 +14,11 @@ def trained(tmp_path_factory):
     root = tmp_path_factory.mktemp("world")
     for split, seed in (("train", 0), ("val", 1), ("test", 2)):
         write_fake_dataset(root / "data" / split, seed=seed)
-    base = replace(get_config("smoke", "edm"), fixed_edges=False, augment=True)
+    base = replace(replace(model_config("smoke"), objective="edm"), fixed_edges=False, augment=True)
     configs = {
         "coarse": replace(base, cell=2, window=4),
         "fine": replace(base, cell=1, window=8, context_cell=2),
-        "whole": get_config("smoke", "regression"),
+        "whole": replace(model_config("smoke"), objective="regression"),
     }
     return root, {label: train(cfg, data_root=root / "data", out=root / label)["folder"] for label, cfg in configs.items()}
 

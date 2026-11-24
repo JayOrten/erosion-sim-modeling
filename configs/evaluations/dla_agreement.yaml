@@ -1,0 +1,11 @@
+# Agreement across steps: containment between jump sizes from one start, and chained jumps.
+suite: dla_agreement
+data_profile: dla_master
+steps: 32
+batch_size: 64
+seed: 0
+jump_fractions: [0.0625, 0.125, 0.25, 0.5, 1.0]
+fresh_starts: 100
+chains: [1, 2, 4]
+examples: 4
+bf16: true

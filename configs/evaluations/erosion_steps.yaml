@@ -1,0 +1,18 @@
+# erosion_test at very few sampler steps, one sample per pair (for distilled students).
+suite: erosion
+data_profile: erosion_master/main_256
+split: test
+data: []
+runs: null
+pairs_per_run: 4
+ends_yr: null
+samples: 1
+steps: 32
+step_sweep: [1, 2, 4, 8, 32]
+baselines: [analytical]
+fill_pits: false
+chains: []
+batch_size: 32
+examples: 3
+seed: 0
+bf16: true

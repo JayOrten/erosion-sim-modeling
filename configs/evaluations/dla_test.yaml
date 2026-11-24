@@ -1,0 +1,10 @@
+# Every DLA test condition (the fixed-p grid and the shared starts), at the default sampler steps.
+suite: dla
+data_profile: dla_master
+steps: 32
+batch_size: 64
+seed: 0
+examples: 4
+bf16: true
+only: null
+step_sweep: null

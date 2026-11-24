@@ -1,0 +1,21 @@
+# World, on 1024² runs with uniform maps (band 2).
+suite: world
+data_profile: erosion_master/main_1024
+split: test
+data: [[map_shape, uniform]]
+runs: 4
+ends_yr: [25000.0, 50000.0]
+margin: 32
+steps: 32
+splits: [5.0]
+level_pairs_per_run: 4
+baselines: [analytical, analytical_chunks, analytical_blended]
+chunk: 256
+chunk_edge: 16
+chunk_model: null
+seams: true
+seam_windows: 4
+batch_size: 16
+examples: 2
+seed: 0
+bf16: true

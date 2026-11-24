@@ -1,0 +1,18 @@
+# Single window, on every 256² test run, broken down by map shape and contrast.
+suite: erosion
+data_profile: erosion_master/main_256
+split: test
+data: []
+runs: null
+pairs_per_run: 4
+ends_yr: null
+samples: 2
+steps: 32
+step_sweep: null
+baselines: [analytical]
+fill_pits: false
+chains: []
+batch_size: 32
+examples: 3
+seed: 0
+bf16: true
