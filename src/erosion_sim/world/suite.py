@@ -1,8 +1,9 @@
-"""The world evaluation suite (track C), written as a results folder (``experiments/results.py``).
+"""The world evaluation suite (track C), written as a results folder (``evaluation/results.py``).
 
-Worlds. ``Settings.worlds`` names each world and the experiment's levels that form it, coarsest first,
-for example ``(("world", ("coarse", "fine")),)``. A third element overrides the sampler for that world:
-``(("T1", ("coarse", "fine"), (("splits", ()),)),)`` (experiment C3; keys ``steps`` and ``splits``).
+Worlds. ``Settings.worlds`` names each world and the models that form its levels, coarsest first, for
+example ``(("base", ("coarse", "fine")),)``. A third element overrides the sampler for that world:
+``(("base_T1", ("coarse", "fine"), (("splits", ()),)),)`` (keys ``steps`` and ``splits``). The
+``evaluate`` command fills it from a world's file in ``configs/worlds/``.
 
 What is scored, on test runs, from the start terrain to each of ``ends_yr``:
 
@@ -14,7 +15,7 @@ What is scored, on test runs, from the start terrain to each of ``ends_yr``:
   training (``level:<label>``). Separates a level's own error from the pipeline's.
 - Baselines (``baselines``), on the same interior: ``analytical`` on the whole run (the bounded method on
   the true domain); ``analytical_chunks`` on closed ``chunk``² pieces, stitched; ``analytical_blended``
-  on pieces at half-chunk stride, blended with tents; ``model_chunks``, the experiment's whole-run model
+  on pieces at half-chunk stride, blended with tents; ``model_chunks``, the whole-run model
   ``chunk_model`` on closed pieces; ``simulator_chunks``, the simulator on closed pieces, read from the
   ``chunked_<chunk>.npy`` file that ``erosion-datagen chunked`` writes next to the split.
 - Near chunk edges: each entry's RMSE within ``chunk_edge`` cells of an internal chunk boundary
@@ -42,7 +43,7 @@ from ..erosion.baselines import (
     chunk_edge_mask,
     chunked,
 )
-from ..experiments.results import model_records, write_results
+from ..evaluation.results import model_records, write_results
 from ..objectives.edm import DEFAULT_STEPS, initial_noise
 from ..objectives.sampling import generate, is_generative
 from ..training.checkpoints import load_checkpoint
@@ -68,7 +69,7 @@ class Settings:
     baselines: tuple[str, ...] = ("analytical", "analytical_chunks", "analytical_blended")
     chunk: int = 256
     chunk_edge: int = 16
-    chunk_model: str | None = None  # label of a whole-run model in the experiment, for model_chunks
+    chunk_model: str | None = None  # name of a whole-run model, for model_chunks
     seams: bool = True
     seam_windows: int = 4
     batch_size: int = 16
@@ -145,7 +146,7 @@ def _levels_alone(label: str, level: tuple, test: Split, runs: np.ndarray, ends:
 
 
 def evaluate_world(models: dict[str, Path], out: Path, settings: Settings, data_root: Path | None = None,
-                   device: str | None = None) -> Path:
+                   device: str | None = None, record: dict | None = None) -> Path:
     """Score the worlds and levels of ``settings`` (model label -> folder) and write the results to ``out``."""
     loaded = {label: load_checkpoint(folder, device=device) for label, folder in models.items()}
     if not settings.worlds:
@@ -243,4 +244,4 @@ def evaluate_world(models: dict[str, Path], out: Path, settings: Settings, data_
                  "margin": margin, "interior": side},
         "settings": asdict(settings),
     }
-    return write_results(out, scalars, arrays, examples, manifest)
+    return write_results(out, scalars, arrays, examples, {**manifest, **(record or {})})

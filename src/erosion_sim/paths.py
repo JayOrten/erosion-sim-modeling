@@ -6,8 +6,11 @@ file exists, else the repo's ``artifacts/``. ``local.json`` is gitignored, so ea
     {"artifacts": "/path/to/large/storage/erosion"}
 
 - ``artifacts/data/<profile>/<split>/``: datasets from ``datagen/``.
-- ``artifacts/models/<experiment>/<label>/``: one trained model per folder (``model_dir``).
-- ``artifacts/results/<name>/``: one evaluation per folder (``experiments/results.py``).
+- ``artifacts/models/<model>/``: one trained model per folder (``model_dir``).
+- ``artifacts/results/<evaluation>/<predictor>/``: one evaluation of one predictor per folder
+  (``evaluation/results.py``).
+
+Configs for models, evaluations, and worlds are in the repo's ``configs/`` (``CONFIGS_DIR``).
 """
 
 import json
@@ -29,6 +32,7 @@ DATA_DIR = ARTIFACTS_DIR / "data"
 MODELS_DIR = ARTIFACTS_DIR / "models"
 RESULTS_DIR = ARTIFACTS_DIR / "results"
 DATAGEN_DIR = REPO_DIR / "datagen"
+CONFIGS_DIR = REPO_DIR / "configs"
 
 
 def data_root(profile: str, root: Path | None = None) -> Path:
@@ -37,20 +41,18 @@ def data_root(profile: str, root: Path | None = None) -> Path:
     return Path(root) if root is not None else DATA_DIR / profile
 
 
-def model_dir(experiment: str, label: str, root: Path | None = None) -> Path:
-    """The folder of model ``label`` of experiment ``experiment``: ``<root or artifacts/models>/<experiment>/<label>``.
+def model_dir(name: str, root: Path | None = None) -> Path:
+    """The folder of model ``name``: ``<root or artifacts/models>/<name>``.
 
-    It holds ``config.json`` (the config), ``best.pt``, ``last.pt``, ``history.json``,
+    It holds ``config.json`` (the config), ``best.pt``, ``last.pt``, ``history.json``, ``train.log``,
     and, once training ends, ``done.json``.
     """
-    return (Path(root) if root is not None else MODELS_DIR) / experiment / label
+    return (Path(root) if root is not None else MODELS_DIR) / name
 
 
-def model_path(name: str | Path, root: Path | None = None) -> Path:
-    """A model folder named in a config: absolute as given, otherwise under ``artifacts/models`` (or ``root``),
-    for example ``"B2/regression"``."""
-    path = Path(name)
-    return path if path.is_absolute() else (Path(root) if root is not None else MODELS_DIR) / path
+def results_dir(evaluation: str, predictor: str, root: Path | None = None) -> Path:
+    """The results of one predictor under one evaluation: ``<root or artifacts/results>/<evaluation>/<predictor>``."""
+    return (Path(root) if root is not None else RESULTS_DIR) / evaluation / predictor
 
 
 def is_finished(folder: Path) -> bool:

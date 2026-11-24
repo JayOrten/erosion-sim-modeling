@@ -1,0 +1,10 @@
+# DLA smoke.
+suite: dla
+data_profile: dla_smoke
+steps: 2
+batch_size: 8
+seed: 0
+examples: 4
+bf16: true
+only: null
+step_sweep: null

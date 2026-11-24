@@ -1,0 +1,18 @@
+# Single window, up to 150,000 yr from the start terrain, in one call and chained.
+suite: erosion
+data_profile: erosion_master/long_256
+split: test
+data: []
+runs: null
+pairs_per_run: 4
+ends_yr: [50000.0, 100000.0, 150000.0]
+samples: 1
+steps: 32
+step_sweep: null
+baselines: [analytical]
+fill_pits: false
+chains: [[3, 50000.0], [6, 25000.0], [15, 10000.0]]
+batch_size: 32
+examples: 3
+seed: 0
+bf16: true

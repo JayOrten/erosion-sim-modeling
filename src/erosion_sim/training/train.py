@@ -19,7 +19,7 @@ from ..models.layers import count_parameters
 from ..objectives import consistency, flow
 from ..objectives.edm import VAL_SIGMAS, denoising_loss, training_loss
 from ..objectives.residual import residual_rms
-from ..paths import code_version, model_path
+from ..paths import code_version, model_dir
 from ..seeding import step_generator
 from .checkpoints import build_model, load_checkpoint
 
@@ -145,10 +145,11 @@ def train(cfg: Config, out: Path, data_root: Path | None = None, show: bool = Fa
 
     With ``cfg.residual_of``, the model samples the residual of that regression model; with ``cfg.teacher``,
     it is a consistency student distilled from that EDM model, starting from its weights. Either way it
-    uses the other model's ``Scaling``, and ``models_root`` is where relative model paths are found.
+    uses the other model's ``Scaling``. Models are found by name under ``models_root`` (default
+    ``artifacts/models``).
 
     Stops early after ``cfg.patience`` evaluations without a better validation loss.
-    Keyword overrides replace ``cfg`` fields, for example ``train(PROFILES["smoke"], steps=500)``.
+    Keyword overrides replace ``cfg`` fields, for example ``train(model_config("smoke"), out, steps=500)``.
     Returns the training history, plus the model folder under ``"folder"``.
     """
     cfg = replace(cfg, **overrides)
@@ -168,7 +169,7 @@ def train(cfg: Config, out: Path, data_root: Path | None = None, show: bool = Fa
         train_data, val_data, scaling, sigma_data = make_erosion_datasets(cfg, data_root)
     base = teacher = None
     if cfg.residual_of or cfg.teacher:
-        other, other_scaling, other_cfg, _ = load_checkpoint(model_path(cfg.residual_of or cfg.teacher, models_root),
+        other, other_scaling, other_cfg, _ = load_checkpoint(model_dir(cfg.residual_of or cfg.teacher, models_root),
                                                              device=str(device))
         same = ("task", "cell", "window", "context_cell", "inputs", "data_profile")
         if any(getattr(other_cfg, k) != getattr(cfg, k) for k in same):
@@ -247,7 +248,7 @@ def train(cfg: Config, out: Path, data_root: Path | None = None, show: bool = Fa
         tmp.replace(last_path)
         _write_json(out / "history.json", history)
 
-    print(f"{cfg.profile} ({out.name}): {count_parameters(model):,} parameters, {len(train_data):,} training items, "
+    print(f"{cfg.name}: {count_parameters(model):,} parameters, {len(train_data):,} training items, "
           f"{len(val_subset):,} validation items, device {device}", flush=True)
     running, seen, start, step = 0.0, 0, time.perf_counter(), done
     for step, batch in enumerate(train_loader, start=done + 1):

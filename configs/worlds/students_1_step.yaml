@@ -1,0 +1,4 @@
+# The final world's distilled students, at 1 sampler step.
+levels: [coarse_student, fine_student]
+steps: 1
+splits: [5.0]

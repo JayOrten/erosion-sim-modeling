@@ -1,5 +1,9 @@
 # Plan: codebase for the experiments
 
+> Superseded in part (2026-11-24): the experiment registry, `Ref`, `submit`, and `models/<experiment>/<label>/`
+> are gone. Models, evaluations, and worlds are YAML files in `configs/`; experiments are notebooks only.
+> See README.md, "Use". The rest of this plan is kept as the record of how the code was built.
+
 ## Goal
 
 Rework the codebase so it supports every experiment in `experiments-plan.md`, and so each one can be

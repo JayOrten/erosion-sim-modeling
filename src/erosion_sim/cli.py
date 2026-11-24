@@ -1,12 +1,12 @@
 """Command-line entry point, ``erosion-sim``. Each subcommand runs one stage; the Slurm scripts call them.
 
-- ``erosion-sim list``: the registered experiments (``experiments/registry.py``) and their models.
-- ``erosion-sim submit <experiment> [--dry-run] [--force-evaluate]``: from the login node, submit the
-  experiment's training jobs and its evaluation job (``runner.submit``).
-- ``erosion-sim train <experiment> <model>``: train one model of an experiment, resuming if it was
-  interrupted. Does nothing if it is finished.
-- ``erosion-sim evaluate <experiment> [--force]``: run the experiment's suite, writing
-  ``artifacts/results/<experiment>/``. ``--force`` replaces existing results.
+- ``erosion-sim list``: every model, world, and evaluation in ``configs/``, with what is trained and
+  evaluated.
+- ``erosion-sim train <model>``: train ``configs/models/<model>.yaml`` into ``artifacts/models/<model>/``,
+  resuming if it was interrupted. Does nothing if it is finished.
+- ``erosion-sim evaluate <evaluation> <predictor> [--force]``: score a model or world under
+  ``configs/evaluations/<evaluation>.yaml``, writing ``artifacts/results/<evaluation>/<predictor>/``.
+  ``--force`` replaces existing results.
 - ``erosion-sim dla-generate <profile> [split ...]``: simulate DLA splits (``dla/data.py``). Runs
   locally; the DLA data is small and fast.
 """
@@ -15,36 +15,36 @@ import argparse
 
 
 def _list(args) -> None:
-    from .experiments.registry import EXPERIMENTS, resolve
-    from .experiments.results import results_dir
-    from .paths import is_finished, model_dir
+    from .config import config_names
+    from .evaluation.evaluate import world_config
+    from .paths import RESULTS_DIR, is_finished, model_dir
 
-    for name, exp in EXPERIMENTS.items():
-        done = (results_dir(name) / "manifest.json").exists()
-        print(f"{name:<20} {exp.title}  [{exp.suite}]{'  results' if done else ''}")
-        for label in exp.models:
-            owner, owner_label, _ = resolve(name, label)
-            folder = model_dir(owner, owner_label)
-            state = "trained" if is_finished(folder) else ("started" if folder.exists() else "")
-            print(f"    {label:<16} {owner + '/' + owner_label:<32} {state}")
+    def state(name: str) -> str:
+        folder = model_dir(name)
+        return "trained" if is_finished(folder) else ("started" if folder.exists() else "")
 
-
-def _submit(args) -> None:
-    from .experiments.runner import submit
-
-    submit(args.experiment, dry_run=args.dry_run, force_evaluate=args.force_evaluate)
+    print("models")
+    for name in config_names("models"):
+        print(f"    {name:<32} {state(name)}")
+    print("worlds")
+    for name in config_names("worlds"):
+        print(f"    {name:<32} {', '.join(world_config(name)['levels'])}")
+    print("evaluations (predictors with results)")
+    for name in config_names("evaluations"):
+        done = sorted(m.parent.name for m in (RESULTS_DIR / name).glob("*/manifest.json"))
+        print(f"    {name:<32} {', '.join(done)}")
 
 
 def _train(args) -> None:
-    from .experiments.runner import train_model
+    from .training.run import train_model
 
-    print(f"finished: {train_model(args.experiment, args.model)}", flush=True)
+    print(f"finished: {train_model(args.model)}", flush=True)
 
 
 def _evaluate(args) -> None:
-    from .experiments.runner import evaluate
+    from .evaluation.evaluate import evaluate
 
-    print(f"wrote {evaluate(args.experiment, force=args.force)}", flush=True)
+    print(f"wrote {evaluate(args.evaluation, args.predictor, force=args.force)}", flush=True)
 
 
 def _dla_generate(args) -> None:
@@ -62,22 +62,16 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="erosion-sim")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    listing = commands.add_parser("list", help="registered experiments and the state of their models")
+    listing = commands.add_parser("list", help="models, worlds, and evaluations, with what is done")
     listing.set_defaults(run=_list)
 
-    submit = commands.add_parser("submit", help="submit an experiment's training and evaluation jobs")
-    submit.add_argument("experiment")
-    submit.add_argument("--dry-run", action="store_true", help="print the sbatch commands without running them")
-    submit.add_argument("--force-evaluate", action="store_true", help="redo the evaluation if results exist")
-    submit.set_defaults(run=_submit)
-
-    train = commands.add_parser("train", help="train one model of an experiment, resuming if interrupted")
-    train.add_argument("experiment")
-    train.add_argument("model", help="the model's label in the experiment")
+    train = commands.add_parser("train", help="train a model, resuming if interrupted")
+    train.add_argument("model", help="a file name in configs/models/, without .yaml")
     train.set_defaults(run=_train)
 
-    evaluate = commands.add_parser("evaluate", help="run an experiment's evaluation suite")
-    evaluate.add_argument("experiment")
+    evaluate = commands.add_parser("evaluate", help="score a model or world under an evaluation")
+    evaluate.add_argument("evaluation", help="a file name in configs/evaluations/, without .yaml")
+    evaluate.add_argument("predictor", help="a model (configs/models/) or world (configs/worlds/)")
     evaluate.add_argument("--force", action="store_true", help="replace existing results")
     evaluate.set_defaults(run=_evaluate)
 

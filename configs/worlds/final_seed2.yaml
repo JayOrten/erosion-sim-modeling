@@ -1,0 +1,4 @@
+# The final world, seed 2.
+levels: [final_coarse_seed2, final_fine_seed2]
+steps: 32
+splits: [5.0]

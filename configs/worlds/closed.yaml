@@ -1,0 +1,4 @@
+# The base world's levels trained on whole closed runs.
+levels: [coarse_closed, fine_closed]
+steps: 32
+splits: [5.0]

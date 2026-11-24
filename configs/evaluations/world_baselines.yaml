@@ -1,0 +1,22 @@
+# World against every way of making a bounded method infinite, on every 512² test run.
+# Needs `erosion-datagen chunked main_512 test --chunk 256` for the simulator chunks.
+suite: world
+data_profile: erosion_master/main_512
+split: test
+data: []
+runs: null
+ends_yr: [25000.0, 50000.0]
+margin: 32
+steps: 32
+splits: [5.0]
+level_pairs_per_run: 4
+baselines: [analytical, analytical_chunks, analytical_blended, model_chunks, simulator_chunks]
+chunk: 256
+chunk_edge: 16
+chunk_model: erosion_final_seed0
+seams: true
+seam_windows: 4
+batch_size: 16
+examples: 2
+seed: 0
+bf16: true

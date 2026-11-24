@@ -3,7 +3,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ..experiments.results import Results
+from ..evaluation.results import Results
 
 METRIC_LABELS = {
     "particles": "particles",
@@ -26,9 +26,10 @@ def models(results: Results) -> list[str]:
     return list(results.manifest.get("entries", results.manifest["models"]))
 
 
-def plot_metric(results: Results, metric: str, show: bool = True):
-    """Mean ± standard deviation of ``metric`` per test condition, each model beside the simulator."""
-    conds = results.manifest["conditions"]
+def plot_metric(results: Results, metric: str, conditions: list[str] | None = None, show: bool = True):
+    """Mean ± standard deviation of ``metric`` per test condition (default: all), each model beside the
+    simulator."""
+    conds = conditions or results.manifest["conditions"]
     labels = models(results)
     fig, ax = plt.subplots(figsize=(max(6, 0.45 * len(conds)), 3.8), layout="constrained")
     width = 0.8 / (len(labels) + 1)
@@ -95,13 +96,14 @@ def plot_radial_density(results: Results, conditions: list[str] | None = None, s
     return fig
 
 
-def table(results: Results, metrics: list[str] | None = None) -> None:
-    """Print each model's mean ± standard deviation per condition and metric, beside the simulator's."""
+def table(results: Results, metrics: list[str] | None = None, conditions: list[str] | None = None) -> None:
+    """Print each model's mean ± standard deviation per condition (default: all) and metric, beside the
+    simulator's."""
     names = metrics or list(METRIC_LABELS)
     for label in models(results):
         print(f"== {label}  (model mean ± std | simulator mean ± std)")
         print(f"{'condition':<12}" + "".join(f"{m:>34}" for m in names))
-        for cond in results.manifest["conditions"]:
+        for cond in conditions or results.manifest["conditions"]:
             row = results.scalars[label][cond]
             cells = [f"{row[m]['model_mean']:7.3f} ± {row[m]['model_std']:5.3f} | "
                      f"{row[m]['simulator_mean']:7.3f} ± {row[m]['simulator_std']:5.3f}" for m in names]

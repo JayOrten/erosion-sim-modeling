@@ -1,5 +1,5 @@
 """The erosion evaluation suite (track B): every terrain metric for some single-window models on test runs,
-written as a results folder (``experiments/results.py``).
+written as a results folder (``evaluation/results.py``).
 
 Pairs. Every model is scored on the same (run, start, end) pairs of the test runs: ``pairs_per_run``
 random pairs per run (fixed by ``seed``), or with ``ends_yr``, the pairs from the start terrain to each of
@@ -36,7 +36,7 @@ import torch
 from ..data.hydrology import fill_pits
 from ..data.pairs import ErosionPairs
 from ..data.splits import Split
-from ..experiments.results import model_records, write_results
+from ..evaluation.results import model_records, write_results
 from ..objectives.edm import DEFAULT_STEPS, initial_noise
 from ..objectives.sampling import generate, is_generative, network_calls
 from ..training.checkpoints import load_checkpoint
@@ -148,8 +148,8 @@ def _predict(model, dataset: ErosionPairs, pairs: np.ndarray, settings: Settings
 
 
 def evaluate_erosion(models: dict[str, Path], out: Path, settings: Settings = Settings(), data_root: Path | None = None,
-                     device: str | None = None) -> Path:
-    """Score each model (label -> model folder) on the test pairs and write the results to ``out``."""
+                     device: str | None = None, record: dict | None = None) -> Path:
+    """Score each model (name -> model folder) on the test pairs and write the results to ``out``."""
     loaded = {label: load_checkpoint(folder, device=device) for label, folder in models.items()}
     for label, (_, _, cfg, _) in loaded.items():
         if cfg.task != "erosion" or cfg.window is not None or cfg.cell != 1:
@@ -247,4 +247,4 @@ def evaluate_erosion(models: dict[str, Path], out: Path, settings: Settings = Se
         "test": {"data_profile": profile, "split": settings.split, "runs": int(len(runs)), "pairs": int(len(pairs))},
         "settings": asdict(settings),
     }
-    return write_results(out, scalars, arrays, examples, manifest)
+    return write_results(out, scalars, arrays, examples, {**manifest, **(record or {})})

@@ -1,0 +1,4 @@
+# The base world, sampled with no blend phases.
+levels: [coarse, fine]
+steps: 32
+splits: []

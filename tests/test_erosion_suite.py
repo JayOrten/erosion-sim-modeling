@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from erosion_terrain import Terrain
 
-from erosion_sim.config import PROFILES
+from erosion_sim.config import model_config
 from erosion_sim.data import hydrology
 from erosion_sim.erosion import metrics, plots
 from erosion_sim.erosion.baselines import (
@@ -16,7 +16,7 @@ from erosion_sim.erosion.baselines import (
     chunked,
 )
 from erosion_sim.erosion.suite import Settings, choose_pairs, evaluate_erosion
-from erosion_sim.experiments.results import read_results
+from erosion_sim.evaluation.results import read_results
 from erosion_sim.training.train import train
 
 matplotlib.use("Agg")
@@ -94,7 +94,7 @@ def two_models(tmp_path_factory):
         write_fake_dataset(root / "data" / split, seed=seed)
     folders = {}
     for objective in ("regression", "edm"):
-        cfg = replace(PROFILES["smoke"], objective=objective)
+        cfg = replace(model_config("smoke"), objective=objective)
         folders[objective] = train(cfg, data_root=root / "data", out=root / objective)["folder"]
     return root, folders
 
@@ -142,7 +142,7 @@ def test_suite_step_sweep_and_chains(two_models, tmp_path):
 
 def test_suite_rejects_world_levels(two_models, tmp_path):
     root, folders = two_models
-    cfg = replace(PROFILES["smoke"], objective="edm", fixed_edges=False, window=8)
+    cfg = replace(model_config("smoke"), objective="edm", fixed_edges=False, window=8)
     level = train(cfg, data_root=root / "data", out=tmp_path / "level")["folder"]
     with pytest.raises(ValueError, match="world"):
         evaluate_erosion({"level": level}, tmp_path / "r", data_root=root / "data", device="cpu")
